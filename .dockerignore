@@ -1,0 +1,12 @@
+.git
+.idea
+.env
+data
+backups
+secrets
+target
+frontend
+docs
+src/test
+*.pfx
+*.p12

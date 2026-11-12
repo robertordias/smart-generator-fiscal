@@ -1,0 +1,72 @@
+name: sa-trindade
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-fiscal}
+      POSTGRES_USER: ${DB_USER:-fiscal}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Defina DB_PASSWORD no arquivo .env}
+      TZ: America/Sao_Paulo
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-fiscal}
+      DB_USER: ${DB_USER:-fiscal}
+      DB_PASSWORD: ${DB_PASSWORD:?Defina DB_PASSWORD no arquivo .env}
+      SERVER_ADDRESS: 0.0.0.0
+      PORT: 8080
+      APP_ADMIN_PASSWORD: ${APP_ADMIN_PASSWORD:?Defina APP_ADMIN_PASSWORD no arquivo .env}
+      APP_TENANT_ID: ${APP_TENANT_ID:-00000000-0000-0000-0000-000000000001}
+      APP_COOKIE_SECURE: ${APP_COOKIE_SECURE:-false}
+      APP_CLIENT_PASSWORD: ${APP_CLIENT_PASSWORD:-}
+      APP_CLIENT_ISSUER_ID: ${APP_CLIENT_ISSUER_ID:-}
+      NFSE_MASTER_KEY: ${NFSE_MASTER_KEY:-}
+      NFSE_ICP_TRUSTSTORE: ${NFSE_ICP_TRUSTSTORE:-}
+      NFSE_ICP_TRUSTSTORE_PASSWORD: ${NFSE_ICP_TRUSTSTORE_PASSWORD:-}
+      NFSE_ENVIRONMENT: ${NFSE_ENVIRONMENT:-HOMOLOGACAO}
+      NFSE_PRODUCTION_ENABLED: ${NFSE_PRODUCTION_ENABLED:-false}
+      NFSE_CHECK_REVOCATION: ${NFSE_CHECK_REVOCATION:-true}
+      NFSE_SIGNATURE_ALGORITHM: ${NFSE_SIGNATURE_ALGORITHM:-SHA256}
+      JAVA_TOOL_OPTIONS: -Dcom.sun.security.enableCRLDP=true
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - ./secrets:/run/fiscal-secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
