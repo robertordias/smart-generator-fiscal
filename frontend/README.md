@@ -20,15 +20,17 @@ npm install
 npm run dev
 ```
 
-Abra **http://127.0.0.1:5173**. Usuário `contador`; senha definida em `APP_ADMIN_PASSWORD` no terminal do Java. O usuário `cliente` também é compatível quando configurado no backend: ele consulta sua empresa e seus padrões e prepara rascunhos, mas não cadastra empresas nem publica configurações.
+Abra **http://127.0.0.1:5173**. Usuário `contador`; senha definida em `APP_ADMIN_PASSWORD` no backend (no `.env` da raiz ao usar Docker). O usuário `cliente` também é compatível quando configurado no backend: ele consulta sua empresa e seus padrões e prepara rascunhos, mas não cadastra empresas nem publica configurações.
 
 Se necessário, copie `.env.example` para `.env` e altere `BACKEND_URL`. Essa variável configura o proxy do Vite no servidor; nunca coloque senhas ou certificados em variáveis `VITE_*`.
 
 ## Telas
 
 - Login: autenticação real por `/api/auth/login` e restauração por `/api/auth/session`, erro de credenciais e opção mostrar/ocultar senha.
-- Visão geral: carteira acessível, total e valor de rascunhos, competências do mês, documentos recentes e atalhos. Não apresenta rascunhos como notas autorizadas ou faturamento.
-- Empresas: listagem, busca por nome/CNPJ e cadastro para o gestor.
+- Visão geral: faturamento diário/mensal e quantidade de notas válidas autorizadas, pendências e certificados, com filtros de data, emitente e ambiente. Rascunhos não contam como faturamento.
+- Empresas: listagem, busca, cadastro e importação CSV com prévia e correção de campos inválidos em modal.
+- Tomadores: cadastro e edição por emitente, reutilizados na emissão.
+- Contábil · XML: prévia e exportação em lote dos XMLs oficiais e eventos em ZIP.
 - Padrões fiscais: consulta por emitente/competência e criação de novas versões com LC 116, tributação nacional, CNAE, descrição, percentuais e ISS retido. Cliente tem acesso de consulta.
 - Nova nota: formulário em três etapas (documento/destinatário, serviços, pagamento/emissão), com quantidades, unitários, descontos, retenções e resumo. Rascunho persistente e transmissão após confirmação do CNPJ. Veja [campos e regras](../docs/FORMULARIO-EMISSAO.md).
 - Rascunhos: consulta paginada, empresa ativa, filtro por competência e detalhes do snapshot histórico.
@@ -66,4 +68,4 @@ Referências usadas: [instalação oficial do Material UI](https://mui.com/mater
 
 ## Limites
 
-A integração NFS-e foi implementada, mas exige configuração do cofre, truststore ICP-Brasil, A1 e procuração válidos e homologação oficial antes da produção. Não há credenciais reais incluídas. O DANFSe é acessado pelo portal oficial, pois sua antiga API foi descontinuada. Cenários fiscais especiais usam complementos oficiais ou DPS completa não assinada; não há motor tributário universal. O cadastro básico ainda aceita CNPJ numérico; o fluxo de geração fiscal verifica os dígitos de CPF/CNPJ. A3, NF-e e compartilhamento permanecem pendentes. Consulte [o guia fiscal](../docs/INTEGRACAO-NFSE.md).
+A integração NFS-e foi implementada, mas exige configuração do cofre, truststore ICP-Brasil, A1 e procuração válidos e homologação oficial antes da produção. Não há credenciais reais incluídas. O DANFSe é acessado pelo portal oficial, pois sua antiga API foi descontinuada. Cenários fiscais especiais usam complementos oficiais ou DPS completa não assinada; não há motor tributário universal. O cadastro básico ainda aceita CNPJ numérico; o fluxo de geração fiscal verifica os dígitos de CPF/CNPJ. A3 e NF-e de produtos permanecem pendentes. O compartilhamento é assistido por WhatsApp/e-mail com confirmação no aplicativo externo; disparos automáticos permanecem pendentes. Consulte [o guia fiscal](../docs/INTEGRACAO-NFSE.md).

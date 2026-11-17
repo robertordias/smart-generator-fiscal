@@ -1,6 +1,6 @@
-# Emissor fiscal white-label — Java 21
+# SA Trindade — Emissor fiscal para escritórios contábeis
 
-Arquitetura de um SaaS fiscal para escritórios contábeis e base executável de API Java 21/Spring Boot. O projeto completo está especificado em [Arquitetura funcional, telas e escopo](docs/ARQUITETURA.md) e no [modelo de banco PostgreSQL](docs/modelo-postgresql.sql).
+Sistema web com backend Java 21/Spring Boot, frontend React 19/Material UI e PostgreSQL 16. Identidade visual em branco, cinza e dourado, com frontend independente na pasta `frontend/`. Código-fonte: [smart-generator-fiscal](https://github.com/robertordias/smart-generator-fiscal). O projeto completo está especificado em [Arquitetura funcional, telas e escopo](docs/ARQUITETURA.md) e no [modelo de banco PostgreSQL](docs/modelo-postgresql.sql).
 
 **Situação:** backend Java e frontend React/Material UI, com login de 8 horas, empresas, padrões fiscais versionados, rascunhos e conector NFS-e Nacional por A1/procuração. Implementados cofre criptografado, enquadramento, geração/assinatura/validação da DPS, transmissão mTLS, consulta, XML e cancelamento por evento. **A integração ainda não foi homologada com certificado e procuração reais.** O ambiente padrão é homologação e a produção exige habilitação explícita. Painel de autorizações, filtros, exportação contábil em ZIP e compartilhamento assistido estão disponíveis. A3, NF-e, marca personalizada e disparos automáticos continuam pendentes.
 
@@ -15,7 +15,8 @@ O sistema também possui [cadastro de tomadores, NBS e variações do mesmo serv
 Com Docker Desktop iniciado, na raiz do projeto:
 
 ```sh
-cp .env.example .env
+# Somente na primeira configuração; preserve um .env já existente.
+cp -n .env.example .env
 ```
 
 Edite `.env` e defina `DB_PASSWORD` e `APP_ADMIN_PASSWORD` (12+ caracteres). Depois:
@@ -30,23 +31,62 @@ Para executar só o banco no Docker, usar a IDE, transferir os dados H2 antigos 
 
 ## Abrir a interface em desenvolvimento
 
-Primeiro, inicie o PostgreSQL (`docker compose up -d postgres`) e configure `DB_URL`, `DB_USER` e `DB_PASSWORD` conforme o guia. Use dois terminais. No primeiro, na raiz do projeto, inicie o backend:
+Pré-requisitos: Docker Desktop iniciado e Node.js 20.19+ com npm. Na raiz, configure o `.env` como descrito acima. Para usar o frontend com recarga automática e manter Java/PostgreSQL no Docker:
 
 ```sh
-mvn clean verify
-export APP_ADMIN_PASSWORD='MinhaSenhaForte123'
-java -jar target/emissor-fiscal-0.1.0.jar
-```
-
-No segundo, também partindo da raiz:
-
-```sh
+docker compose up --build -d postgres backend
 cd frontend
 npm install
 npm run dev
 ```
 
-Abra **http://127.0.0.1:5173**. Entre com o usuário **contador** e a senha definida em `APP_ADMIN_PASSWORD` (no exemplo, `MinhaSenhaForte123`). O frontend requer Node.js 20.19+ e npm. O backend continua na raiz, com Java 21+ e Maven; o frontend tem configuração e dependências independentes.
+Abra **http://127.0.0.1:5173**. Entre como **contador**, usando a senha `APP_ADMIN_PASSWORD` do `.env` da raiz. Essa senha autentica o gestor do sistema; certificados A1 têm sua própria senha de importação.
+
+| Serviço | Endereço padrão |
+|---|---|
+| Frontend com Vite | http://127.0.0.1:5173 |
+| Frontend com Docker/Nginx | http://127.0.0.1:3000 |
+| Backend | http://127.0.0.1:8080/api |
+| Saúde do backend e banco | http://127.0.0.1:8080/health |
+| PostgreSQL local | 127.0.0.1:5432 |
+
+O `npm run dev` inicia apenas o frontend. O backend precisa estar em execução para entrar e acessar os dados. Para iniciar novamente os serviços já compilados, execute `docker compose up -d postgres backend`. Após alterar o código Java, use novamente `--build`.
+
+Para executar o Java pela IDE ou terminal em vez do contêiner, pare o backend Docker (`docker compose stop backend`), mantenha o PostgreSQL iniciado e, na raiz, execute com JDK 21+ e Maven 3.9+:
+
+```sh
+mvn clean verify
+java -jar target/emissor-fiscal-0.1.0.jar
+```
+
+O Java carrega automaticamente o `.env` da raiz quando iniciado nesse diretório; variáveis de ambiente e argumentos podem sobrescrever os valores. Para essa execução, o banco usa por padrão `127.0.0.1` e `DB_PORT`; `DB_URL` permite indicar outra conexão. Consulte [configuração e migração do banco](docs/POSTGRESQL.md).
+
+### Conexão recusada no frontend
+
+Se o Vite mostrar `http proxy error` com `ECONNREFUSED 127.0.0.1:8080`, o Java não está acessível no destino configurado. Na raiz:
+
+```sh
+docker compose up -d postgres backend
+docker compose ps
+docker compose logs --tail=100 backend
+curl --fail http://127.0.0.1:8080/health
+```
+
+A saúde deve retornar `{"status":"UP"}`. Depois, atualize a página. Se a porta já estiver ocupada, escolha uma única execução do backend (Docker ou IDE). Se configurar outra porta com `BACKEND_PORT` no Docker ou `PORT` no Java local, ajuste também `BACKEND_URL` em `frontend/.env` e reinicie o Vite.
+
+## Recursos e fluxo atual
+
+- **Empresas:** cadastro, busca e importação CSV de layout fixo, com prévia, validação e correção manual dos campos em modal antes de gravar os registros válidos.
+- **Tomadores:** cadastro por emitente, edição e reutilização no formulário da nota.
+- **Padrões fiscais:** versões por empresa, nome de serviço e vigência; LC 116, código nacional, CNAE, NBS, descrição e retenções. Permite variações do mesmo serviço com e sem retenção de ISS.
+- **Emissão:** formulário em três etapas, itens com quantidade e valor unitário, descontos, pagamento, complementos, retenções e resumo. Salva rascunhos e exige revisão e confirmação do CNPJ antes da transmissão.
+- **A1 e procurações:** cofre criptografado, vínculo do representante aos clientes, poderes, validade e enquadramento fiscal.
+- **Notas:** preparação e assinatura da DPS, transmissão, consulta, reconciliação, filtros, XML, cancelamento e histórico. DANFSe pelo portal oficial.
+- **Painel:** faturamento diário/mensal de notas válidas autorizadas, quantidades, pendências e alertas de certificados, com filtros de data, emitente e ambiente.
+- **Contábil · XML:** exportação em lote por período/ambiente, com XMLs oficiais, eventos de cancelamento e manifesto em ZIP.
+- **Compartilhamento:** WhatsApp/e-mail com mensagem e link oficial, cópia e download/compartilhamento do XML. O envio é confirmado pelo usuário no aplicativo externo; não há disparo automático via SMTP ou API do WhatsApp.
+
+Os dados fiscais são selecionados pelo emitente, nome da variação e competência. O backend aplica a versão vigente e grava um **snapshot imutável no rascunho**. Alterar os padrões posteriormente não modifica notas ou rascunhos anteriores. Sobrescritas de descrição ou regras fiscais exigem justificativa conforme o campo; a revisão continua necessária antes da emissão.
 
 Fluxo de emissão: **Nova nota → Documento e destinatário → Serviços → Pagamento e emissão → Revisar emissão → Confirmar CNPJ**. A tela reúne tomador, quantidades, valores, pagamento, complementos, descontos e retenções; também permite salvar um rascunho sem transmitir. Configure A1, procuração e enquadramento em **A1 e procurações** antes de gerar a nota. O ambiente padrão continua em homologação. Consulte o [formulário de emissão](docs/FORMULARIO-EMISSAO.md) e o [painel operacional, XMLs em lote e compartilhamento](docs/OPERACAO-CONTABIL.md).
 
@@ -123,8 +163,17 @@ Para modificar padrões, publique por POST uma nova configuração com outra dat
 | POST | `/api/drafts` | Empresa autorizada; exige Idempotency-Key |
 | GET | `/api/drafts?page=0&size=10` | Listagem paginada; filtros opcionais issuerId, from e to |
 | GET | `/api/drafts/{id}` | Empresa autorizada |
+| POST | `/api/issuers/import/preview` e `/api/issuers/import` | Gestor; prévia e importação CSV com correções |
+| GET | `/api/issuers/{id}/registration` | Empresa autorizada; dados cadastrais importados |
+| GET/POST | `/api/issuers/{id}/recipients` | Consulta e cadastro de tomadores da empresa autorizada |
+| PUT | `/api/issuers/{id}/recipients/{recipientId}` | Edição de tomador da empresa autorizada |
+| GET | `/api/issuers/{id}/services?competence=AAAA-MM-DD` | Serviços vigentes da empresa autorizada |
+| GET | `/api/office/dashboard` | Painel de notas no escopo autorizado |
+| GET | `/api/office/xml/summary` e `/api/office/xml/export` | Gestor; prévia e ZIP contábil |
 
-Os endpoints de negócio exigem autenticação. Apenas `/api/auth/login` aceita acesso sem sessão existente. O tenant é obtido do usuário, sem confiar em tenant informado pelo cliente. Campos JSON desconhecidos são rejeitados para evitar falsa impressão de processamento de dados ainda não suportados. Os percentuais aceitam 0 a 100 com até 4 casas; isso é validação estrutural, não validação fiscal. CNPJ apenas numérico com 14 posições neste protótipo, sem validação de dígitos verificadores; suporte completo é requisito de produção.
+As rotas de certificados, procurações e documentos fiscais estão documentadas no [guia NFS-e](docs/INTEGRACAO-NFSE.md).
+
+O login e `/health` são públicos; os endpoints de negócio exigem autenticação. O tenant é obtido do usuário, sem confiar em tenant informado pelo cliente. Campos JSON desconhecidos são rejeitados para evitar falsa impressão de processamento de dados ainda não suportados. Os percentuais aceitam 0 a 100 com até 4 casas; isso é validação estrutural, não validação fiscal. O cadastro básico manual aceita CNPJ numérico de 14 posições; importação CSV e geração fiscal verificam os dígitos. A validação cadastral não substitui as regras do ambiente fiscal oficial.
 
 ## Verificação
 
@@ -135,3 +184,18 @@ mvn test
 Testes cobrem autenticação HTTP, validação estrutural, isolamento entre tenants/empresas, restrição do cliente, vigência por competência, preservação do snapshot, justificativa de sobrescrita, idempotência, conflitos de cadastro, consultas do painel e paginação/filtros de rascunhos. Não são testes de homologação fiscal. A suíte usa H2 por padrão e também pode executar no PostgreSQL com as variáveis descritas no guia. Há teste adicional da transferência entre os dois bancos.
 
 Estrutura: `src/main/java` contém API e autenticação; `src/main/resources/db/migration/` contém os esquemas Flyway por banco; `docs` contém o escopo de produção. Nenhuma credencial ou certificado real deve ser adicionado ao repositório. Os certificados artificiais em src/test/resources/nfse são apenas de laboratório. As APIs fiscais ficam sob /api/nfse; consulte o guia de integração para configuração e limites.
+
+## Documentação e limites atuais
+
+- [Arquitetura e escopo planejado](docs/ARQUITETURA.md)
+- [PostgreSQL, Docker, backup e transferência do H2](docs/POSTGRESQL.md)
+- [Importação de empresas e correções](docs/IMPORTACAO-EMPRESAS.md)
+- [Serviços, NBS e tomadores](docs/SERVICOS-TOMADORES.md)
+- [Formulário de emissão](docs/FORMULARIO-EMISSAO.md)
+- [Painel, exportação XML e compartilhamento](docs/OPERACAO-CONTABIL.md)
+- [Integração NFS-e Nacional e configuração fiscal](docs/INTEGRACAO-NFSE.md)
+- [Frontend, build e testes de navegador](frontend/README.md)
+
+O ambiente padrão é **HOMOLOGACAO**. A produção exige `NFSE_ENVIRONMENT=PRODUCAO` e `NFSE_PRODUCTION_ENABLED=true`, além de configuração fiscal e credenciais válidas. O filtro de ambiente do painel não altera o ambiente de emissão. O conector implementa o Padrão Nacional; não há conectores municipais próprios que garantam atendimento a todo município/cenário do Brasil.
+
+A homologação com A1, procuração e contribuinte reais continua pendente. Os testes usam certificados artificiais e integração controlada, sem emissão real. A3, NF-e de produtos, personalização de logomarca por escritório e gestão dinâmica de usuários permanecem no escopo futuro. A chave `NFSE_MASTER_KEY` deve ser preservada para ler os A1 já cadastrados. `.env`, certificados reais, bancos locais e dependências geradas não devem ser enviados ao Git.
