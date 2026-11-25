@@ -110,10 +110,13 @@ class NationalXml {
             if(env.equals("HOMOLOGACAO"))add(inf,"finNFSe",0);
             add(inf,"cLocEmi",issuer.municipality());
             Element prest=add(inf,"prest",null);add(prest,"CNPJ",issuer.cnpj());
-            if(filled(profile.municipalRegistration()))add(prest,"IM",profile.municipalRegistration());
+            String municipalRegistration=MunicipalRegistration.normalize(issuer.municipality(),profile.municipalRegistration());
+            if(filled(municipalRegistration))add(prest,"IM",municipalRegistration);
             Element reg=add(prest,"regTrib",null);add(reg,"opSimpNac",profile.simplesOption());
             if(profile.simplesOption().equals("3"))add(reg,"regApTribSN",profile.simplesAssessment());add(reg,"regEspTrib",profile.specialRegime());
-            var recipient=input.recipient(); Element toma=add(inf,"toma",null);add(toma,recipient.taxId().length()==14?"CNPJ":"CPF",recipient.taxId());add(toma,"xNome",recipient.name());
+            var recipient=input.recipient();
+            if(defaults.issWithheld() && recipient.address()==null)throw bad("Informe o endereço nacional completo do tomador para emitir com ISS retido. Corrija o cadastro e crie um novo rascunho");
+            Element toma=add(inf,"toma",null);add(toma,recipient.taxId().length()==14?"CNPJ":"CPF",recipient.taxId());add(toma,"xNome",recipient.name());
             if(recipient.address()!=null) {
                 var address=recipient.address(); Element end=add(toma,"end",null),national=add(end,"endNac",null);
                 add(national,"cMun",address.municipality());add(national,"CEP",address.zip());add(end,"xLgr",address.street());add(end,"nro",address.number());add(end,"xBairro",address.neighborhood());
@@ -146,6 +149,8 @@ class NationalXml {
             else throw bad("Confirme como informar os totais aproximados dos tributos para este documento");
             if(filled(input.ibsCbsXml()))append(inf,input.ibsCbsXml(),"IBSCBS");
         }
+        if("2".equals(text(root,"infDPS/prest/regTrib/opSimpNac")) && !"1".equals(text(root,"infDPS/valores/trib/tribMun/tpRetISSQN")))
+            throw bad("MEI não pode emitir com ISS retido (E0583). Desmarque ISS nas retenções da emissão e salve um novo rascunho. Corrija também o padrão fiscal para as próximas notas");
         validate(root.getOwnerDocument(),"DPS_v1.01.xsd"); return serialize(root.getOwnerDocument());
     }
     private void append(Element parent,String fragment,String expected) {

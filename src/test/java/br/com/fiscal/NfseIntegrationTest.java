@@ -51,6 +51,8 @@ class NfseIntegrationTest extends DatabaseTestSupport {
                 authorized=true;if(mode.equals("TIMEOUT_AFTER"))throw new java.io.IOException("test lost response");
                 return official(env,material);
             }
+            if(path.startsWith("dps/")&&mode.equals("QUERY_FORBIDDEN"))return new Reply(403,json.createObjectNode().put("transportError","Resposta fora do formato JSON"));
+            if(path.startsWith("dps/")&&mode.equals("QUERY_TLS"))throw new javax.net.ssl.SSLHandshakeException("test handshake");
             if(path.startsWith("dps/"))return authorized?new Reply(200,json.createObjectNode().put("chaveAcesso",KEY)):new Reply(404,json.createObjectNode());
             if(path.endsWith("/eventos")&&method.equals("POST")){
                 requestEvent=NationalXml.unzip(json.readTree(payload).get("pedidoRegistroEventoXmlGZipB64").asText());
@@ -179,6 +181,50 @@ class NfseIntegrationTest extends DatabaseTestSupport {
         assertThrows(ResponseStatusException.class,()->service.list(manager,null,0,10,"","",LocalDate.of(2026,2,1),LocalDate.of(2026,1,1),""));
     }
 
+    @Test void normalizesSaoPauloCcmBeforeSavingAndSigningDps() {
+        var current=service.profile(manager,issuer.id());
+        var saved=service.saveProfile(manager,issuer.id(),new NfseModels.Profile(current.simplesOption(),current.simplesAssessment(),current.specialRegime(),"6.470.006-2",current.series(),current.lastDpsNumber()));
+        assertEquals("64700062",saved.municipalRegistration());
+        assertEquals("64700062",service.profile(manager,issuer.id()).municipalRegistration());
+        var note=prepare();var doc=xml.parse(service.artifact(manager,note.id(),"dps"));
+        assertEquals("64700062",xml.text(doc.getDocumentElement(),"infDPS/prest/IM"));assertEquals(0,gateway.posts);
+    }
+    @Test void repreparesRejectedDpsWithCurrentRegistrationWithoutAnotherTransmission() {
+        var original=prepare();gateway.mode="REJECT";
+        assertEquals("REJECTED",service.transmit(manager,original.id(),confirm()).status());
+        int transmissions=gateway.posts;
+        var profile=service.profile(manager,issuer.id());
+        service.saveProfile(manager,issuer.id(),new NfseModels.Profile(profile.simplesOption(),profile.simplesAssessment(),profile.specialRegime(),"6.470.006-2",profile.series(),profile.lastDpsNumber()));
+        var revised=prepare();
+        assertEquals(original.id(),revised.id());assertEquals(original.dpsNumber(),revised.dpsNumber());
+        assertEquals("PREPARED",revised.status());assertEquals(transmissions,gateway.posts);
+        var document=xml.parse(service.artifact(manager,revised.id(),"dps"));
+        assertEquals("64700062",xml.text(document.getDocumentElement(),"infDPS/prest/IM"));
+    }
+    @Test void blocksMeiIssRetentionBeforeSigningOrTransmission() {
+        var current=service.profile(manager,issuer.id());
+        service.saveProfile(manager,issuer.id(),new NfseModels.Profile("2",current.simplesAssessment(),"0",current.municipalRegistration(),current.series(),current.lastDpsNumber()));
+        fiscal.defaults(manager,issuer.id(),new FiscalApi.DefaultsInput(LocalDate.of(2026,1,1),"10.01","100104","6622300","Teste MEI",BigDecimal.ONE,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,true,"MEI retido","109102000"));
+        draft=fiscal.draft(manager,UUID.randomUUID().toString(),new FiscalApi.DraftInput(issuer.id(),LocalDate.of(2026,11,17),BigDecimal.TEN,null,null,"MEI retido"));
+        var base=input();
+        var recipient=new NfseModels.Recipient(base.recipient().taxId(),base.recipient().name(),null,new NfseModels.Address("3550308","01001000","Rua teste","10","Centro"));
+        var error=assertThrows(ResponseStatusException.class,()->service.prepare(manager,new NfseModels.Prepare(draft.id(),recipient,"3550308","","",null,null,base.totalTaxesXml(),null)));
+        assertTrue(error.getReason().contains("E0583"));assertEquals(0,gateway.posts);
+    }
+    @Test void separatesMunicipalServiceSuffixAndPreservesEffectiveSimplesRetentionRate() {
+        String variant="Planos de saúde — ISS retido";
+        fiscal.defaults(manager,issuer.id(),new FiscalApi.DefaultsInput(LocalDate.of(2026,1,1),"10.01","100104","6622300","Corretagem de planos de saúde",new BigDecimal("3.24"),BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,true,variant,"109102000"));
+        draft=fiscal.draft(manager,UUID.randomUUID().toString(),new FiscalApi.DraftInput(issuer.id(),LocalDate.of(2026,11,17),new BigDecimal("1000.00"),null,null,variant));
+        var base=input();
+        var recipient=new NfseModels.Recipient(base.recipient().taxId(),base.recipient().name(),null,new NfseModels.Address("3550308","01001000","Rua de teste","10","Centro"));
+        var prepared=service.prepare(manager,new NfseModels.Prepare(draft.id(),recipient,"3550308","001","",null,null,base.totalTaxesXml(),null));
+        var doc=xml.parse(service.artifact(manager,prepared.id(),"dps"));xml.validate(doc,"DPS_v1.01.xsd");
+        assertEquals("100104",xml.text(doc.getDocumentElement(),"infDPS/serv/cServ/cTribNac"));
+        assertEquals("001",xml.text(doc.getDocumentElement(),"infDPS/serv/cServ/cTribMun"));
+        assertEquals("3.24",xml.text(doc.getDocumentElement(),"infDPS/valores/trib/tribMun/pAliq"));
+        assertEquals("2",xml.text(doc.getDocumentElement(),"infDPS/valores/trib/tribMun/tpRetISSQN"));
+        assertEquals(0,gateway.posts);
+    }
     @Test void signsNbsAndIssRetentionFromTheSelectedVariantAndRejectsNbsMismatch() {
         String name="Anexo III — com retenção";
         fiscal.defaults(manager,issuer.id(),new FiscalApi.DefaultsInput(LocalDate.of(2026,1,1),"01.01","010101","6201501","Serviço de teste",new BigDecimal("5"),BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,true,name,"115011000"));
@@ -186,8 +232,13 @@ class NfseIntegrationTest extends DatabaseTestSupport {
         var base=input();
         var mismatch=new NfseModels.Prepare(draft.id(),base.recipient(),base.serviceMunicipality(),base.municipalServiceCode(),"115012000",null,null,base.totalTaxesXml(),null);
         assertThrows(ResponseStatusException.class,()->service.prepare(manager,mismatch));
-        var note=prepare();var doc=xml.parse(service.artifact(manager,note.id(),"dps"));
+        var missing=assertThrows(ResponseStatusException.class,this::prepare);
+        assertTrue(missing.getReason().contains("endereço nacional completo"));
+        var recipient=new NfseModels.Recipient(base.recipient().taxId(),base.recipient().name(),null,new NfseModels.Address("3550308","01001000","Rua de teste","10","Centro"));
+        var completed=new NfseModels.Prepare(draft.id(),recipient,base.serviceMunicipality(),base.municipalServiceCode(),"",null,null,base.totalTaxesXml(),null);
+        var note=service.prepare(manager,completed);var doc=xml.parse(service.artifact(manager,note.id(),"dps"));
         xml.validate(doc,"DPS_v1.01.xsd");
+        assertEquals("01001000",xml.text(doc.getDocumentElement(),"infDPS/toma/end/endNac/CEP"));
         assertEquals("115011000",xml.text(doc.getDocumentElement(),"infDPS/serv/cServ/cNBS"));
         assertEquals("2",xml.text(doc.getDocumentElement(),"infDPS/valores/trib/tribMun/tpRetISSQN"));
         assertEquals(0,gateway.posts);
@@ -225,6 +276,26 @@ class NfseIntegrationTest extends DatabaseTestSupport {
         var note=prepare();gateway.mode="TIMEOUT_BEFORE";assertEquals("UNKNOWN",service.transmit(manager,note.id(),confirm()).status());String signed=service.artifact(manager,note.id(),"dps");
         assertTrue(service.reconcile(manager,note.id()).retryAllowed());gateway.mode="OK";
         assertEquals("AUTHORIZED",service.transmit(manager,note.id(),confirm()).status());assertEquals(signed,gateway.signed);assertEquals(1,service.profile(manager,issuer.id()).lastDpsNumber());
+    }
+    @Test void reportsQueryFailuresWithoutResendingOrChangingFiscalState() {
+        var note=prepare();gateway.mode="TIMEOUT_BEFORE";
+        service.transmit(manager,note.id(),confirm());int posts=gateway.posts;
+        gateway.mode="QUERY_FORBIDDEN";
+        var forbidden=service.reconcile(manager,note.id());
+        assertEquals("UNKNOWN",forbidden.status());assertEquals("HTTP_403",forbidden.lastCode());assertFalse(forbidden.retryAllowed());
+        gateway.mode="QUERY_TLS";
+        var tls=service.reconcile(manager,note.id());
+        assertEquals("UNKNOWN",tls.status());assertEquals("TLS_FAILURE",tls.lastCode());assertFalse(tls.retryAllowed());
+        assertEquals(posts,gateway.posts);
+    }
+    @Test void permitsOptionalProxyDatesButEnforcesAnyDeclaredBoundaries() {
+        var saved=service.saveProxy(manager,issuer.id(),new NfseModels.ProxyInput(certificate,"SEM DATAS",null,null,true,true,true,true));
+        assertNull(saved.validFrom());assertNull(saved.validTo());assertNotNull(prepare());
+        service.saveProxy(manager,issuer.id(),new NfseModels.ProxyInput(certificate,"FUTURA",LocalDate.now().plusDays(1),null,true,true,true,true));
+        assertThrows(ResponseStatusException.class,this::prepare);
+        service.saveProxy(manager,issuer.id(),new NfseModels.ProxyInput(certificate,"ENCERRADA",null,LocalDate.now().minusDays(1),true,true,true,true));
+        assertThrows(ResponseStatusException.class,this::prepare);
+        assertThrows(ResponseStatusException.class,()->service.saveProxy(manager,issuer.id(),new NfseModels.ProxyInput(certificate,"INVERTIDA",LocalDate.now(),LocalDate.now().minusDays(1),true,true,true,true)));
     }
     @Test void blocksExpiredProxyRevokedCertificateClientRoleAndNumberRollback(){
         service.saveProxy(manager,issuer.id(),new NfseModels.ProxyInput(certificate,"EXPIRED",LocalDate.now().minusDays(10),LocalDate.now().minusDays(1),true,true,true,true));

@@ -23,7 +23,8 @@ public class FiscalApi {
     private final JdbcTemplate db;
     private final ObjectMapper json;
     private final IssuerCsvImport csvImport;
-    public FiscalApi(JdbcTemplate db, ObjectMapper json, IssuerCsvImport csvImport) { this.db = db; this.json = json; this.csvImport=csvImport; }
+    private final CnpjRegistry cnpjRegistry;
+    public FiscalApi(JdbcTemplate db, ObjectMapper json, IssuerCsvImport csvImport,CnpjRegistry cnpjRegistry) { this.db = db; this.json = json; this.csvImport=csvImport; this.cnpjRegistry=cnpjRegistry; }
 
     @PostMapping(value="/issuers/import/preview",consumes="multipart/form-data")
     public IssuerCsvImport.Result previewImport(@AuthenticationPrincipal Security.Account a,
@@ -95,33 +96,90 @@ public class FiscalApi {
     public record Draft(UUID id, UUID issuerId, LocalDate competence, BigDecimal amount, String status, Snapshot snapshot) {}
     public record DraftPage(List<Draft> items, long total, int page, int size) {}
     public record Dashboard(long companies, long drafts, BigDecimal draftAmount, long monthDrafts, BigDecimal monthAmount) {}
+    @GetMapping("/issuers/{id}/recipients/cnpj/{cnpj}")
+    public CnpjRegistry.Result lookupRecipient(@AuthenticationPrincipal Security.Account a,@PathVariable UUID id,@PathVariable String cnpj) {
+        issuer(a,id,false);return cnpjRegistry.lookup(cnpj);
+    }
     public record SavedRecipient(UUID id,NfseModels.Recipient values) {}
     @GetMapping("/issuers/{id}/recipients")
     public List<SavedRecipient> recipients(@AuthenticationPrincipal Security.Account a,@PathVariable UUID id) {
         issuer(a,id,false);
-        return db.query("SELECT * FROM recipient WHERE tenant_id=? AND issuer_id=? ORDER BY name,id",(r,n)-> {
+        return db.query("SELECT r.* FROM recipient r JOIN recipient_issuer l ON l.recipient_id=r.id AND l.tenant_id=r.tenant_id WHERE l.tenant_id=? AND l.issuer_id=? ORDER BY r.name,r.id",(r,n)-> {
             try {
                 var address=r.getString("address_json");
-                return new SavedRecipient(r.getObject("id",UUID.class),new NfseModels.Recipient(r.getString("tax_id"),r.getString("name"),r.getString("email"),address==null?null:json.readValue(address,NfseModels.Address.class)));
+                return new SavedRecipient(r.getObject("id",UUID.class),new NfseModels.Recipient(r.getString("tax_id"),r.getString("name"),r.getString("email"),address==null?registeredRecipientAddress(a,r.getString("tax_id")):json.readValue(address,NfseModels.Address.class)));
             } catch(JsonProcessingException ex) {throw new IllegalStateException("Endereço cadastrado inválido",ex);}
         },a.tenant(),id);
+    }
+    private NfseModels.Address registeredRecipientAddress(Security.Account a,String taxId) {
+        // Reuse imported company registration only inside the same office.
+        return db.query("SELECT i.municipality,r.zip,r.street,r.address_number,r.neighborhood FROM issuer i JOIN issuer_registration r ON r.issuer_id=i.id AND r.tenant_id=i.tenant_id WHERE i.tenant_id=? AND i.cnpj=?",(r,n)-> {
+            String zip=Objects.toString(r.getString("zip"),"").replaceAll("[^0-9]","");
+            String street=r.getString("street"),number=r.getString("address_number"),neighborhood=r.getString("neighborhood");
+            if(!zip.matches("[0-9]{8}")||street==null||street.isBlank()||number==null||number.isBlank()||neighborhood==null||neighborhood.isBlank()||street.length()>255||number.length()>60||neighborhood.length()>60)return null;
+            return new NfseModels.Address(r.getString("municipality"),zip,street,number,neighborhood);
+        },a.tenant(),taxId).stream().filter(Objects::nonNull).findFirst().orElse(null);
     }
     @PostMapping("/issuers/{id}/recipients") @ResponseStatus(HttpStatus.CREATED) @Transactional
     public SavedRecipient createRecipient(@AuthenticationPrincipal Security.Account a,@PathVariable UUID id,@Valid @RequestBody NfseModels.Recipient input) {
         issuer(a,id,true);
         if(!NationalXml.validTaxId(input.taxId()))throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"CPF/CNPJ do tomador inválido");
+        if(db.queryForObject("SELECT COUNT(*) FROM recipient r JOIN recipient_issuer l ON l.recipient_id=r.id AND l.tenant_id=r.tenant_id WHERE l.tenant_id=? AND l.issuer_id=? AND r.tax_id=?",Integer.class,a.tenant(),id,input.taxId())>0)
+            throw new DataIntegrityViolationException("CPF/CNPJ já vinculado ao prestador");
         var key=UUID.randomUUID();
         db.update("INSERT INTO recipient(id,tenant_id,issuer_id,tax_id,name,email,address_json) VALUES(?,?,?,?,?,?,?)",key,a.tenant(),id,input.taxId(),input.name().strip(),input.email(),input.address()==null?null:serialize(input.address()));
+        db.update("INSERT INTO recipient_issuer(tenant_id,recipient_id,issuer_id) VALUES(?,?,?)",a.tenant(),key,id);
         return new SavedRecipient(key,input);
     }
     @PutMapping("/issuers/{id}/recipients/{recipientId}") @Transactional
     public SavedRecipient updateRecipient(@AuthenticationPrincipal Security.Account a,@PathVariable UUID id,@PathVariable UUID recipientId,@Valid @RequestBody NfseModels.Recipient input) {
-        issuer(a,id,true);
+        issuer(a,id,false);
+        if(db.queryForList("SELECT id FROM recipient WHERE tenant_id=? AND id=? FOR UPDATE",UUID.class,a.tenant(),recipientId).isEmpty())
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND);
         if(!NationalXml.validTaxId(input.taxId()))throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"CPF/CNPJ do tomador inválido");
-        int count=db.update("UPDATE recipient SET tax_id=?,name=?,email=?,address_json=?,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=? AND issuer_id=? AND id=?",
-            input.taxId(),input.name().strip(),input.email(),input.address()==null?null:serialize(input.address()),a.tenant(),id,recipientId);
+        if(db.queryForObject("SELECT COUNT(*) FROM recipient_issuer WHERE tenant_id=? AND issuer_id=? AND recipient_id=?",Integer.class,a.tenant(),id,recipientId)==0)
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+        if(!a.role().equals("GESTOR") && db.queryForObject("SELECT COUNT(*) FROM recipient_issuer WHERE tenant_id=? AND recipient_id=?",Integer.class,a.tenant(),recipientId)>1)
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Tomador compartilhado: solicite ao contador a edição do cadastro");
+        var linkedIssuers=db.queryForList("SELECT issuer_id FROM recipient_issuer WHERE tenant_id=? AND recipient_id=? ORDER BY issuer_id",UUID.class,a.tenant(),recipientId);
+        for(var linked:linkedIssuers) issuer(a,linked,true);
+        for(var linked:linkedIssuers) {
+            if(db.queryForObject("SELECT COUNT(*) FROM recipient r JOIN recipient_issuer l ON l.recipient_id=r.id AND l.tenant_id=r.tenant_id WHERE l.tenant_id=? AND l.issuer_id=? AND r.tax_id=? AND r.id<>?",Integer.class,a.tenant(),linked,input.taxId(),recipientId)>0)
+                throw new ResponseStatusException(HttpStatus.CONFLICT,"CPF/CNPJ já cadastrado em um dos prestadores vinculados");
+        }
+        int count=db.update("UPDATE recipient SET tax_id=?,name=?,email=?,address_json=?,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=? AND id=?",
+            input.taxId(),input.name().strip(),input.email(),input.address()==null?null:serialize(input.address()),a.tenant(),recipientId);
         if(count==0)throw new ResponseStatusException(HttpStatus.NOT_FOUND);
         return new SavedRecipient(recipientId,input);
+    }
+
+    public record RecipientCatalog(UUID id,NfseModels.Recipient values,List<UUID> issuerIds) {}
+    public record RecipientLinks(@NotEmpty @Size(max=100) List<@NotNull UUID> issuerIds) {}
+    @GetMapping("/recipients")
+    public List<RecipientCatalog> recipientCatalog(@AuthenticationPrincipal Security.Account a) {
+        manager(a);
+        var result=new LinkedHashMap<UUID,RecipientCatalog>();
+        for(var issuer:issuers(a)) for(var row:recipients(a,issuer.id())) {
+            var entry=result.computeIfAbsent(row.id(),key->new RecipientCatalog(key,row.values(),new ArrayList<>()));
+            entry.issuerIds().add(issuer.id());
+        }
+        return result.values().stream().sorted(Comparator.comparing(row->row.values().name())).toList();
+    }
+    @PostMapping("/recipients/{recipientId}/issuers") @Transactional
+    public Map<String,Integer> linkRecipient(@AuthenticationPrincipal Security.Account a,@PathVariable UUID recipientId,@Valid @RequestBody RecipientLinks input) {
+        manager(a);
+        // Serialize link and edit operations on this recipient, and scope the source to the office.
+        var source=db.queryForList("SELECT tax_id FROM recipient WHERE tenant_id=? AND id=? FOR UPDATE",String.class,a.tenant(),recipientId);
+        if(source.isEmpty())throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Tomador não encontrado");
+        int added=0;
+        for(var target:new TreeSet<>(input.issuerIds())) {
+            issuer(a,target,true);
+            if(db.queryForObject("SELECT COUNT(*) FROM recipient_issuer WHERE tenant_id=? AND recipient_id=? AND issuer_id=?",Integer.class,a.tenant(),recipientId,target)>0)continue;
+            if(db.queryForObject("SELECT COUNT(*) FROM recipient r JOIN recipient_issuer l ON l.recipient_id=r.id AND l.tenant_id=r.tenant_id WHERE l.tenant_id=? AND l.issuer_id=? AND r.tax_id=?",Integer.class,a.tenant(),target,source.getFirst())>0)
+                throw new ResponseStatusException(HttpStatus.CONFLICT,"Um dos prestadores já possui outro cadastro com este CPF/CNPJ. Revise os cadastros antes de vincular");
+            db.update("INSERT INTO recipient_issuer(tenant_id,recipient_id,issuer_id) VALUES(?,?,?)",a.tenant(),recipientId,target);added++;
+        }
+        return Map.of("linked",added);
     }
 
     private UUID scopedIssuer(Security.Account a, UUID requested) {
@@ -177,6 +235,10 @@ public class FiscalApi {
             (r,n) -> new Issuer(r.getObject("id",UUID.class),r.getString("cnpj"),r.getString("name"),r.getString("municipality")),
             account.tenant(),id).stream().findFirst().orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
     }
+    @GetMapping(value="/municipalities",produces="application/json")
+    public org.springframework.core.io.Resource municipalityCatalog() {
+        return new org.springframework.core.io.ClassPathResource("registry/municipalities.json");
+    }
     @GetMapping("/me") public Map<String,Object> me(@AuthenticationPrincipal Security.Account a) {
         return Map.of("username",a.username(),"tenantId",a.tenant(),"role",a.role(),"mode","NFSE_NATIONAL");
     }
@@ -199,6 +261,18 @@ public class FiscalApi {
         db.update("INSERT INTO fiscal_defaults(id,tenant_id,issuer_id,version,effective_from,lc116,national_service,cnae,description,iss_rate,irrf_rate,pis_rate,cofins_rate,csll_rate,inss_rate,iss_withheld,variant_name,nbs) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             key,a.tenant(),id,next,v.effectiveFrom(),v.lc116(),v.nationalService(),v.cnae(),v.description(),v.issRate(),v.irrfRate(),v.pisRate(),v.cofinsRate(),v.csllRate(),v.inssRate(),v.issWithheld(),v.variantName(),v.nbs());
         return new FiscalDefaults(key,next,v);
+    }
+    @PutMapping("/issuers/{id}/defaults/{defaultsId}") @Transactional
+    public FiscalDefaults updateDefaults(@AuthenticationPrincipal Security.Account a,@PathVariable UUID id,
+        @PathVariable UUID defaultsId,@RequestParam int version,@Valid @RequestBody DefaultsInput v) {
+        manager(a); issuer(a,id,true);
+        var current=db.queryForList("SELECT version FROM fiscal_defaults WHERE tenant_id=? AND issuer_id=? AND id=?",Integer.class,a.tenant(),id,defaultsId);
+        if(current.isEmpty())throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Configuração fiscal não encontrada");
+        if(current.getFirst()!=version)throw new ResponseStatusException(HttpStatus.CONFLICT,"Configuração alterada por outro usuário. Atualize a tela antes de editar novamente");
+        Integer next=db.queryForObject("SELECT COALESCE(MAX(version),0)+1 FROM fiscal_defaults WHERE tenant_id=? AND issuer_id=?",Integer.class,a.tenant(),id);
+        db.update("UPDATE fiscal_defaults SET version=?,effective_from=?,lc116=?,national_service=?,cnae=?,description=?,iss_rate=?,irrf_rate=?,pis_rate=?,cofins_rate=?,csll_rate=?,inss_rate=?,iss_withheld=?,variant_name=?,nbs=? WHERE tenant_id=? AND issuer_id=? AND id=?",
+            next,v.effectiveFrom(),v.lc116(),v.nationalService(),v.cnae(),v.description(),v.issRate(),v.irrfRate(),v.pisRate(),v.cofinsRate(),v.csllRate(),v.inssRate(),v.issWithheld(),v.variantName(),v.nbs(),a.tenant(),id,defaultsId);
+        return new FiscalDefaults(defaultsId,next,v);
     }
     private FiscalDefaults resolve(Security.Account a, UUID id, LocalDate date,String variantName) {
         return db.query("SELECT * FROM fiscal_defaults WHERE tenant_id=? AND issuer_id=? AND effective_from<=? AND variant_name=? ORDER BY effective_from DESC FETCH FIRST 1 ROW ONLY",

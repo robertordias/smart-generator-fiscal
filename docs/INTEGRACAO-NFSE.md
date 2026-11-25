@@ -108,3 +108,58 @@ Os testes Java geram, assinam e validam DPS/NFS-e/eventos usando um A1 artificia
 Antes de operar em produção é necessário executar o fluxo no ambiente oficial com A1 ICP-Brasil, procuração válida e casos fiscais reais de homologação, confirmar o algoritmo de assinatura e caminho do endpoint aceitos e validar eventuais mudanças do leiaute. A documentação interativa da SEFIN encerrou a conexão sem certificado nesta sessão; os contratos implementados se baseiam nos manuais e schemas públicos. Nenhuma nota real foi enviada durante o desenvolvimento.
 
 Fontes: [documentação de produção](https://www.gov.br/nfse/pt-br/biblioteca/documentacao-tecnica/documentacao-atual), [endereços oficiais de APIs](https://www.gov.br/nfse/pt-br/biblioteca/documentacao-tecnica/apis-prod-restrita-e-producao) e [representação por procuração nas APIs](https://www.gov.br/nfse/pt-br/noticias/nova-funcionalidade-possibilita-representacao-e-alternancia-de-perfis-na-nfs-e).
+
+
+### Preparar as raízes RSA para o A1
+
+O suporte atual do cofre é A1 RSA (mínimo de 2048 bits). As raízes públicas RSA v5 e v12 estão no [repositório AC-Raiz do ITI](https://www.gov.br/iti/pt-br/assuntos/repositorio/repositorio-ac-raiz). Baixe os arquivos pelo HTTPS oficial, preservando a verificação TLS:
+
+```sh
+curl --fail --proto '=https' --proto-redir '=https' --location -o /tmp/ICP-Brasilv5.crt https://acraiz.icpbrasil.gov.br/credenciadas/RAIZ/ICP-Brasilv5.crt
+curl --fail --proto '=https' --proto-redir '=https' --location -o /tmp/ICP-Brasilv12.crt https://acraiz.icpbrasil.gov.br/credenciadas/RAIZ/ICP-Brasilv12.crt
+read -s ICP_STORE_PASSWORD
+export ICP_STORE_PASSWORD
+java scripts/BuildIcpTruststore.java secrets/icp-truststore.p12 /tmp/ICP-Brasilv5.crt /tmp/ICP-Brasilv12.crt
+unset ICP_STORE_PASSWORD
+```
+
+O utilitário verifica validade, autoassinatura e identificação da raiz e registra os fingerprints SHA-256 em um arquivo `.sources.txt` ao lado do truststore. Recusa sobrescrever um destino existente. Inclui somente raízes públicas, sem chave privada. A confiança inicial vem da origem oficial obtida por HTTPS; os fingerprints registrados documentam os arquivos usados.
+
+No `.env` usado pelo Docker, defina `NFSE_ICP_TRUSTSTORE=/run/fiscal-secrets/icp-truststore.p12` e `NFSE_ICP_TRUSTSTORE_PASSWORD` com a senha escolhida. Para Java fora do Docker, use o caminho absoluto do arquivo no computador. Mantenha `NFSE_MASTER_KEY` estável: nunca gere outra se já houver A1 armazenados. Reinicie o backend com `docker compose up -d backend`. Esses arquivos locais ficam fora do Git.
+
+Isso configura a confiança nas raízes; importar um A1 real ainda verifica identidade, senha, validade, cadeia e revogação. Não desabilite essas verificações para contornar erros. A cadeia intermediária deve estar presente no arquivo A1 e os serviços de revogação precisam estar acessíveis ao servidor.
+
+
+### Datas opcionais da procuração
+
+No cadastro da procuração, as datas inicial e final são opcionais. Sem data inicial não há limite inicial declarado; sem data final não há limite final declarado. Datas preenchidas continuam sendo respeitadas, e a data final não pode anteceder a inicial. A migração V6 preserva as datas já cadastradas. Essa opção não altera a validade real do A1 nem dispensa a procuração oficial ou a aceitação dos poderes pelo Fisco.
+
+
+### Consultas sem resultado e protocolo HTTP
+
+O conector fixa HTTP/1.1: o serviço nacional pode encerrar HTTP/2 com `Received RST_STREAM: Use HTTP/1.1 for request`. Falhas de consulta preservam o estado fiscal, registram o diagnóstico no histórico e não disparam transmissão automática. Respostas HTTP de erro são preservadas para diferenciar recusa do serviço de falhas TLS, DNS e timeout.
+
+Uma consulta oficial que não localize a DPS permite o reenvio explícito da mesma DPS assinada, mantendo identidade e numeração; não gera automaticamente outro documento. Sem autorização confirmada e chave oficial não há DANFSe disponível.
+
+
+### Configuração persistente por prestador durante a emissão
+
+O A1 do escritório é reutilizável, mas cada prestador tem seu próprio vínculo de procuração e seu próprio enquadramento, persistidos no PostgreSQL. Configurar uma empresa não configura automaticamente as demais. Salvar enquadramento e salvar procuração são operações distintas.
+
+Na tela **Nova nota**, **Configurar emissão** e os alertas **Configurar** abrem o cadastro em um modal com o prestador da nota identificado e fixo. As gravações atualizam imediatamente as verificações da emissão. **Voltar à emissão** preserva os campos preenchidos. Depois de salvar enquadramento e procuração, o cadastro é recuperado nas próximas notas dessa empresa, inclusive após recarregar a página. A tela mostra **Configuração salva para este prestador**. Não há criação automática de procurações a partir de vínculos de outras empresas.
+
+
+### Salvamento da procuração: campos e truststore na IDE
+
+O botão **Salvar procuração** apresenta os campos pendentes no próprio formulário. A1 e referência da procuração são obrigatórios; datas são opcionais. Erros da API aparecem no cartão da procuração e a confirmação de sucesso identifica o vínculo salvo para o prestador.
+
+Ao executar Java pela IDE a partir da raiz, o caminho padrão de Docker `/run/fiscal-secrets/NOME.p12` é resolvido para `./secrets/NOME.p12` quando a pasta de montagem não existe no computador. No contêiner, o caminho montado continua sendo utilizado. Outros caminhos configurados precisam existir e ser legíveis. O indicador de configuração agora verifica a existência/leitura do arquivo; ele não substitui a validação criptográfica do A1. Após atualizar o Java em uma instância iniciada pela IDE, reinicie essa execução para carregar as classes atualizadas.
+
+
+### Consulta de revogação na execução pela IDE
+
+A aplicação habilita `com.sun.security.enableCRLDP=true` antes de iniciar o Spring e antes de construir o cofre. A consulta de listas de revogação deixa de depender de uma VM option do IntelliJ ou de `JAVA_TOOL_OPTIONS` do Docker. A verificação PKIX e a opção `NFSE_CHECK_REVOCATION` mantêm seu comportamento; não há autorização automática por falha de rede. Certificados vencidos ou ainda fora da validade recebem mensagens específicas.
+
+A configuração precisa ser aplicada antes da inicialização dos componentes PKIX do JDK. Após atualizar esta versão, reinicie o backend já em execução pela IDE. Não basta recarregar o frontend, pois a JVM pode ter carregado a configuração anterior.
+
+A falha anterior foi reproduzida com o A1 cadastrado em um processo Java sem a VM option e o mesmo A1 foi validado com a correção, sem a opção externa. Não houve alteração de procurações nem transmissão fiscal nesse teste. Referência técnica: [Java 21 — PKIXRevocationChecker](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/security/cert/PKIXRevocationChecker.html).

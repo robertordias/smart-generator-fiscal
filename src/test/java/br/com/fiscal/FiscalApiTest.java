@@ -21,6 +21,7 @@ class FiscalApiTest extends DatabaseTestSupport {
     @Autowired FiscalApi api;
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate recipientDb;
     final Security.Account manager = new Security.Account("contador","unused",UUID.fromString("00000000-0000-0000-0000-000000000001"),null,"GESTOR");
     final String basic="Basic "+Base64.getEncoder().encodeToString("contador:test-password-123".getBytes(java.nio.charset.StandardCharsets.UTF_8));
     FiscalApi.Issuer createIssuer() {
@@ -33,6 +34,74 @@ class FiscalApiTest extends DatabaseTestSupport {
     }
     FiscalApi.DefaultsInput variant(LocalDate date,String name,boolean withheld,String nbs) {
         return new FiscalApi.DefaultsInput(date,"01.01","010101","6201501","Serviço de teste",new BigDecimal("5"),BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,withheld,name,nbs);
+    }
+    @Test void fillsAddressFromImportedCompanyOnlyInSameOffice() {
+        var source=createIssuer();var issuer=createIssuer();
+        recipientDb.update("INSERT INTO issuer_registration(tenant_id,issuer_id,trade_name,state_registration,municipal_registration,cnae,taxation_reference,street,address_number,complement,zip,neighborhood,city,uf,phone,email) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",manager.tenant(),source.id(),"","","","","","Rua importada","25","","01001000","Centro","São Paulo","SP","","");
+        // Valid document for a tomador, with an issuer registration in this office.
+        recipientDb.update("UPDATE issuer SET cnpj=? WHERE id=?","11222333000181",source.id());
+        var saved=api.createRecipient(manager,issuer.id(),new NfseModels.Recipient("11222333000181","Empresa tomadora",null,null));
+        assertEquals("Rua importada",api.recipients(manager,issuer.id()).getFirst().values().address().street());
+        var own=new NfseModels.Address("3550308","01002000","Endereço específico","7","Bairro");
+        api.updateRecipient(manager,issuer.id(),saved.id(),new NfseModels.Recipient("11222333000181","Empresa tomadora",null,own));
+        assertEquals(own,api.recipients(manager,issuer.id()).getFirst().values().address());
+        var foreign=new Security.Account("outro","",UUID.randomUUID(),null,"GESTOR");
+        var foreignIssuer=api.createIssuer(foreign,new FiscalApi.IssuerInput("12345678000195","Outro escritório","3550308"));
+        api.createRecipient(foreign,foreignIssuer.id(),new NfseModels.Recipient("11222333000181","Sem endereço",null,null));
+        assertNull(api.recipients(foreign,foreignIssuer.id()).getFirst().values().address());
+    }
+    @Test void sharesRecipientAcrossIssuersAndKeepsOfficeAndClientIsolation() throws Exception {
+        var first=createIssuer();var second=createIssuer();var third=createIssuer();
+        var input=new NfseModels.Recipient("52998224725","Tomador compartilhado","original@example.com",null);
+        var saved=api.createRecipient(manager,first.id(),input);
+        var path="/api/recipients/"+saved.id()+"/issuers";
+        var body=json.writeValueAsString(new FiscalApi.RecipientLinks(List.of(first.id(),second.id())));
+        mvc.perform(post(path).header("Authorization",basic).contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk()).andExpect(jsonPath("linked").value(1));
+        mvc.perform(post(path).header("Authorization",basic).contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk()).andExpect(jsonPath("linked").value(0));
+        assertEquals(saved,api.recipients(manager,second.id()).getFirst());
+        assertTrue(api.recipients(manager,third.id()).isEmpty());
+        var client=new Security.Account("cliente","",manager.tenant(),second.id(),"CLIENTE");
+        assertEquals(saved,api.recipients(client,second.id()).getFirst());
+        assertEquals(403,assertThrows(ResponseStatusException.class,()->api.recipientCatalog(client)).getStatusCode().value());
+        assertEquals(403,assertThrows(ResponseStatusException.class,()->api.linkRecipient(client,saved.id(),new FiscalApi.RecipientLinks(List.of(third.id())))).getStatusCode().value());
+        assertEquals(403,assertThrows(ResponseStatusException.class,()->api.updateRecipient(client,second.id(),saved.id(),input)).getStatusCode().value());
+        var changed=new NfseModels.Recipient(input.taxId(),"Nome corrigido","corrigido@example.com",null);
+        api.updateRecipient(manager,second.id(),saved.id(),changed);
+        assertEquals(changed,api.recipients(manager,first.id()).getFirst().values());
+        assertEquals(changed,api.recipients(manager,second.id()).getFirst().values());
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class,()->api.createRecipient(manager,second.id(),input));
+        var foreign=new Security.Account("outro","",UUID.randomUUID(),null,"GESTOR");
+        assertTrue(api.recipientCatalog(foreign).isEmpty());
+        assertEquals(404,assertThrows(ResponseStatusException.class,()->api.linkRecipient(foreign,saved.id(),new FiscalApi.RecipientLinks(List.of(second.id())))).getStatusCode().value());
+        var foreignIssuer=api.createIssuer(foreign,new FiscalApi.IssuerInput("11222333000181","Outra carteira","3550308"));
+        mvc.perform(post(path).header("Authorization",basic).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(new FiscalApi.RecipientLinks(List.of(third.id(),foreignIssuer.id()))))).andExpect(status().isNotFound());
+        assertTrue(api.recipients(manager,third.id()).isEmpty());
+        api.createRecipient(manager,third.id(),input);
+        mvc.perform(post(path).header("Authorization",basic).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(new FiscalApi.RecipientLinks(List.of(third.id()))))).andExpect(status().isConflict());
+        mvc.perform(post(path).header("Authorization",basic).contentType(MediaType.APPLICATION_JSON).content("{\"issuerIds\":[]}")).andExpect(status().isBadRequest());
+    }
+    @Test void editsNbsWithSameValidityPreservesSnapshotsAndRejectsStaleOrUnauthorizedEdits() throws Exception {
+        var issuer=createIssuer();var date=LocalDate.of(2026,1,1);
+        var original=api.defaults(manager,issuer.id(),variant(date,"Padrão",false,"115011000"));
+        var draft=api.draft(manager,UUID.randomUUID().toString(),new FiscalApi.DraftInput(issuer.id(),date,BigDecimal.TEN,null,null));
+        var changed=variant(date,"Padrão",false,"115012000");
+        var path="/api/issuers/"+issuer.id()+"/defaults/"+original.id()+"?version="+original.version();
+        mvc.perform(put(path).header("Authorization",basic).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(changed)))
+            .andExpect(status().isOk()).andExpect(jsonPath("values.nbs").value("115012000"));
+        assertEquals("115012000",api.effectiveDefaults(manager,issuer.id(),date).values().nbs());
+        assertEquals("115011000",api.getDraft(manager,draft.id()).snapshot().defaults().values().nbs());
+        var fresh=api.draft(manager,UUID.randomUUID().toString(),new FiscalApi.DraftInput(issuer.id(),date,BigDecimal.TEN,null,null));
+        assertEquals("115012000",fresh.snapshot().defaults().values().nbs());
+        mvc.perform(put(path).header("Authorization",basic).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(changed))).andExpect(status().isConflict());
+        mvc.perform(put(path).header("Authorization",basic).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(variant(date,"Padrão",false,"123")))).andExpect(status().isBadRequest());
+        var client=new Security.Account("cliente","",manager.tenant(),issuer.id(),"CLIENTE");
+        assertEquals(403,assertThrows(ResponseStatusException.class,()->api.updateDefaults(client,issuer.id(),original.id(),2,changed)).getStatusCode().value());
+        var other=createIssuer();
+        assertEquals(404,assertThrows(ResponseStatusException.class,()->api.updateDefaults(manager,other.id(),original.id(),2,changed)).getStatusCode().value());
+        var foreign=new Security.Account("outro","",UUID.randomUUID(),null,"GESTOR");
+        assertEquals(404,assertThrows(ResponseStatusException.class,()->api.updateDefaults(foreign,issuer.id(),original.id(),2,changed)).getStatusCode().value());
+        var conflicting=api.defaults(manager,issuer.id(),variant(date,"Outro",false,""));
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class,()->api.updateDefaults(manager,issuer.id(),conflicting.id(),conflicting.version(),changed));
     }
     @Test void preservesCommercialFormRecalculatesTotalsAndRequiresReasonForTaxOverrides() {
         var issuer=createIssuer();api.defaults(manager,issuer.id(),policy(LocalDate.of(2026,1,1),"Serviço original"));

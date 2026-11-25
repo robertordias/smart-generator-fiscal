@@ -1,0 +1,2 @@
+ALTER TABLE fiscal_proxy ALTER COLUMN valid_from DROP NOT NULL;
+ALTER TABLE fiscal_proxy ALTER COLUMN valid_to DROP NOT NULL;

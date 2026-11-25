@@ -7,7 +7,7 @@ import org.flywaydb.core.Flyway;
 
 /** Transferência explícita, sem apagar ou alterar a base H2 de origem. */
 final class DatabaseTransfer {
-    static final List<String> TABLES=List.of("issuer","issuer_registration","recipient","fiscal_defaults","draft","fiscal_certificate","fiscal_proxy","nfse_profile","nfse_sequence","nfse_document","nfse_audit");
+    static final List<String> TABLES=List.of("issuer","issuer_registration","recipient","recipient_issuer","fiscal_defaults","draft","fiscal_certificate","fiscal_proxy","nfse_profile","nfse_sequence","nfse_document","nfse_audit");
     record Column(String target,String source,int type) {}
 
     static void run() throws Exception {
@@ -39,7 +39,7 @@ final class DatabaseTransfer {
                     }
                     var counts=new LinkedHashMap<String,Long>();
                     for(String table:TABLES)counts.put(table,copy(source,target,table));
-                    try(var statement=target.createStatement()){statement.executeUpdate("UPDATE nfse_document SET authorized_at=created_at WHERE authorized_at IS NULL AND official_xml IS NOT NULL");}
+                    try(var statement=target.createStatement()){statement.executeUpdate("INSERT INTO recipient_issuer(tenant_id,recipient_id,issuer_id) SELECT r.tenant_id,r.id,r.issuer_id FROM recipient r WHERE NOT EXISTS (SELECT 1 FROM recipient_issuer l WHERE l.tenant_id=r.tenant_id AND l.recipient_id=r.id AND l.issuer_id=r.issuer_id)");statement.executeUpdate("UPDATE nfse_document SET authorized_at=created_at WHERE authorized_at IS NULL AND official_xml IS NOT NULL");}
                     target.commit();return Collections.unmodifiableMap(counts);
                 } catch(Exception ex) {target.rollback();throw ex;}
             } finally {source.rollback();}

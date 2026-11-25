@@ -1,6 +1,8 @@
 package br.com.fiscal;
 
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.util.Map;
 import org.springframework.core.env.Environment;
@@ -32,9 +34,25 @@ class NfseSettings {
             throw bad("O endpoint deve usar HTTPS e o domínio oficial do ambiente");
         return URI.create(base.toString().replaceAll("/+$","")+"/"+path);
     }
+    Path truststorePath() {
+        String configured=env.getProperty("NFSE_ICP_TRUSTSTORE","");
+        if(configured.isBlank())throw bad("Configure NFSE_ICP_TRUSTSTORE com as âncoras ICP-Brasil confiáveis");
+        Path path=Path.of(configured);
+        // The same .env may be used by Compose and an IDE started from the project root.
+        Path mount=Path.of("/run/fiscal-secrets");
+        if(!Files.exists(mount) && path.isAbsolute() && path.normalize().getParent()!=null && path.normalize().getParent().equals(mount)) {
+            Path local=Path.of("secrets").toAbsolutePath().resolve(path.getFileName());
+            if(Files.isRegularFile(local)&&Files.isReadable(local))return local;
+        }
+        if(!Files.isRegularFile(path)||!Files.isReadable(path))throw bad("A cadeia ICP-Brasil configurada não está acessível ao backend. Confira o caminho do truststore para esta execução (Docker ou IDE)");
+        return path;
+    }
+    boolean trustConfigured() {
+        try {truststorePath();return true;}catch(RuntimeException ex){return false;}
+    }
     Map<String,Object> describe() {
         return Map.of("environment",environment(),"productionEnabled",env.getProperty("NFSE_PRODUCTION_ENABLED",Boolean.class,false),
-            "vaultConfigured",org.springframework.util.StringUtils.hasText(env.getProperty("NFSE_MASTER_KEY")),"trustConfigured",org.springframework.util.StringUtils.hasText(env.getProperty("NFSE_ICP_TRUSTSTORE")),
+            "vaultConfigured",org.springframework.util.StringUtils.hasText(env.getProperty("NFSE_MASTER_KEY")),"trustConfigured",trustConfigured(),
             "layoutVersion","1.01","officialAuthorizationTested",false);
     }
     static ResponseStatusException bad(String reason) { return new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,reason); }

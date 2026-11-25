@@ -13,7 +13,7 @@ final class NfseModels {
         @Override public String toString() { return "CertificateInput[PROTECTED]"; }
     }
     record ProxyInput(@NotNull UUID certificateId, @NotBlank @Size(max=200) String reference,
-        @NotNull LocalDate validFrom, @NotNull LocalDate validTo, boolean canIssue, boolean canQuery, boolean canCancel, boolean active) {}
+        LocalDate validFrom, LocalDate validTo, boolean canIssue, boolean canQuery, boolean canCancel, boolean active) {}
     record Proxy(UUID issuerId, UUID certificateId, String reference, LocalDate validFrom, LocalDate validTo,
         boolean canIssue, boolean canQuery, boolean canCancel, boolean active, String verificationStatus, OffsetDateTime verifiedAt) {}
     record Profile(@NotBlank @Pattern(regexp="[123]") String simplesOption,

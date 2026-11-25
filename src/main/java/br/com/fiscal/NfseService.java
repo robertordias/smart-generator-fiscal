@@ -16,6 +16,7 @@ import static br.com.fiscal.NfseModels.*;
 
 @Service
 class NfseService {
+    private static final org.slf4j.Logger log=org.slf4j.LoggerFactory.getLogger(NfseService.class);
     private final JdbcTemplate db;private final FiscalApi fiscal;private final CertificateVault vault;
     private final NationalXml xml;private final NationalGateway gateway;private final NfseSettings settings;
     private final ObjectMapper json;private final TransactionTemplate tx;
@@ -26,19 +27,20 @@ class NfseService {
     <T>T decode(String value,Class<T> type){try{return json.readValue(value,type);}catch(Exception ex){throw new IllegalStateException("Cadastro fiscal armazenado inválido",ex);}}
     private LocalDate today(){return settings.clock.instant().atZone(ZoneId.of("America/Sao_Paulo")).toLocalDate();}
     Profile profile(Security.Account a,UUID issuerId){
-        fiscal.issuer(a,issuerId,false);
+        var issuer=fiscal.issuer(a,issuerId,false);
         var values=db.queryForList("SELECT profile FROM nfse_profile WHERE tenant_id=? AND issuer_id=?",String.class,a.tenant(),issuerId);
         if(values.isEmpty())throw bad("Configure o enquadramento e a série DPS do emitente");
         var profile=decode(values.getFirst(),Profile.class);
         var numbers=db.queryForList("SELECT last_number FROM nfse_sequence WHERE tenant_id=? AND issuer_id=? AND environment=? AND series=?",Long.class,a.tenant(),issuerId,settings.environment(),profile.series());
-        return new Profile(profile.simplesOption(),profile.simplesAssessment(),profile.specialRegime(),profile.municipalRegistration(),profile.series(),numbers.isEmpty()?0:numbers.getFirst());
+        return new Profile(profile.simplesOption(),profile.simplesAssessment(),profile.specialRegime(),MunicipalRegistration.normalize(issuer.municipality(),profile.municipalRegistration()),profile.series(),numbers.isEmpty()?0:numbers.getFirst());
     }
     Profile saveProfile(Security.Account a,UUID issuerId,Profile profile){
         CertificateVault.manager(a);
+        var issuer=fiscal.issuer(a,issuerId,false);
         if(Integer.parseInt(profile.series())<1||Integer.parseInt(profile.series())>49999)throw bad("Use uma série DPS própria entre 1 e 49999");
         if(profile.simplesOption().equals("3")&&(profile.simplesAssessment()==null||!profile.simplesAssessment().matches("[123]")))throw bad("Informe o regime de apuração do Simples Nacional");
         String series=Integer.toString(Integer.parseInt(profile.series()));
-        var normalized=new Profile(profile.simplesOption(),profile.simplesAssessment(),profile.specialRegime(),profile.municipalRegistration(),series,profile.lastDpsNumber());
+        var normalized=new Profile(profile.simplesOption(),profile.simplesAssessment(),profile.specialRegime(),MunicipalRegistration.normalize(issuer.municipality(),profile.municipalRegistration()),series,profile.lastDpsNumber());
         return tx.execute(status->{
             fiscal.issuer(a,issuerId,true);
             var numbers=db.queryForList("SELECT last_number FROM nfse_sequence WHERE tenant_id=? AND issuer_id=? AND environment=? AND series=?",Long.class,a.tenant(),issuerId,settings.environment(),series);
@@ -57,7 +59,7 @@ class NfseService {
     }
     Proxy saveProxy(Security.Account a,UUID issuerId,ProxyInput input){
         CertificateVault.manager(a);fiscal.issuer(a,issuerId,false);
-        if(input.validTo().isBefore(input.validFrom()))throw bad("A validade da procuração está invertida");
+        if(input.validFrom()!=null && input.validTo()!=null && input.validTo().isBefore(input.validFrom()))throw bad("A validade da procuração está invertida");
         try(var material=vault.load(a.tenant(),input.certificateId())) { /* Validates certificate ownership in the same tenant. */ }
         return tx.execute(status->{
             fiscal.issuer(a,issuerId,true);
@@ -70,7 +72,7 @@ class NfseService {
     }
     private Proxy permitted(Security.Account a,UUID issuerId,String operation){
         CertificateVault.manager(a);var proxy=proxy(a,issuerId);
-        if(!proxy.active()||today().isBefore(proxy.validFrom())||today().isAfter(proxy.validTo()))throw bad("Procuração inativa ou fora da validade declarada");
+        if(!proxy.active()||(proxy.validFrom()!=null && today().isBefore(proxy.validFrom()))||(proxy.validTo()!=null && today().isAfter(proxy.validTo())))throw bad("Procuração inativa ou fora da validade declarada");
         boolean allowed=switch(operation){case "ISSUE"->proxy.canIssue();case "CANCEL"->proxy.canCancel();default->proxy.canQuery();};
         if(!allowed)throw bad("A procuração declarada não contempla esta operação");
         return proxy;
@@ -219,6 +221,9 @@ class NfseService {
         String state=rejection?"REJECTED":"UNKNOWN";update(a,note.id(),state,code(reply),message(reply),false);
         if(reply.status()==403)verified(a,note,"REFUSED_BY_FISCO");audit(a,note.id(),operation,state,code(reply),message(reply),null,reply.body());
     }
+    private void queryFailure(Security.Account a,Note note,String code,String message) {
+        db.update("UPDATE nfse_document SET last_code=?,last_message=?,retry_allowed=FALSE,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=? AND id=? AND status=?",clip(code,60),clip(message,2000),a.tenant(),note.id(),note.status());
+    }
     Note reconcile(Security.Account a,UUID id){
         var note=get(a,id);settings.enabled(note.environment());var proxy=permitted(a,note.issuerId(),"QUERY");
         if(note.status().equals("CANCELLED"))return note;
@@ -232,13 +237,24 @@ class NfseService {
                         db.update("UPDATE nfse_document SET status='UNKNOWN',last_code='DPS_NOT_FOUND',last_message=?,retry_allowed=TRUE,updated_at=CURRENT_TIMESTAMP WHERE tenant_id=? AND id=? AND status IN ('UNKNOWN','SENDING')","DPS ainda não localizada. É permitido reenviar somente a mesma DPS assinada",a.tenant(),id);
                         audit(a,id,"QUERY",note.status(),"DPS_NOT_FOUND","Consulta oficial não localizou a DPS",null,response.body());return get(a,id);
                     }
-                    if(response.status()<200||response.status()>=300)throw bad(message(response));
+                    if(response.status()<200||response.status()>=300){
+                        String detail="Consulta recusada pelo serviço fiscal (HTTP "+response.status()+"). "+message(response);
+                        queryFailure(a,note,code(response),detail);
+                        audit(a,id,"QUERY",note.status(),code(response),detail,null,response.body());return get(a,id);
+                    }
                     key=response.body().path("chaveAcesso").asText("");if(!key.matches("[0-9]{50}"))throw bad("A consulta ainda não retornou chave de acesso válida");
                 }
                 var reply=gateway.exchange(note.environment(),"GET","nfse/"+key,null,material);
                 if(reply.status()>=200&&reply.status()<300)applyIssue(a,note,reply,"QUERY");
                 else audit(a,id,"QUERY",note.status(),code(reply),message(reply),null,reply.body());
-            }catch(Exception ex){if(ex instanceof InterruptedException)Thread.currentThread().interrupt();audit(a,id,"QUERY",note.status(),"QUERY_UNCONFIRMED","Não foi possível concluir a consulta. A situação fiscal anterior foi preservada",null,null);}
+            }catch(Exception ex){
+                if(ex instanceof InterruptedException)Thread.currentThread().interrupt();
+                var failure=FiscalConnectionError.describe(ex);
+                log.warn("Consulta NFS-e não confirmada: {} ({})",failure.code(),ex.getClass().getSimpleName());
+                String detail=failure.message()+". A situação fiscal anterior foi preservada";
+                queryFailure(a,note,failure.code(),detail);
+                audit(a,id,"QUERY",note.status(),failure.code(),detail,null,null);
+            }
             return get(a,id);
         }
     }

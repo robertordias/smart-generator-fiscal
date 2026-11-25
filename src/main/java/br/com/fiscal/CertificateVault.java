@@ -30,7 +30,7 @@ class CertificateVault {
     private final JdbcTemplate db;
     private final NfseSettings settings;
     private final SecureRandom random=new SecureRandom();
-    CertificateVault(JdbcTemplate db,NfseSettings settings) { this.db=db; this.settings=settings; }
+    CertificateVault(JdbcTemplate db,NfseSettings settings) { CertificateValidation.initialize(); this.db=db; this.settings=settings; }
 
     List<Metadata> list(Security.Account a) {
         manager(a);
@@ -88,17 +88,19 @@ class CertificateVault {
         return new Material(privateKey,certificate,store,password.clone());
     }
     private void verify(Material material,String holder) throws Exception {
-        var cert=material.certificate(); cert.checkValidity(Date.from(settings.clock.instant()));
+        var cert=material.certificate();
+        try {cert.checkValidity(Date.from(settings.clock.instant()));}
+        catch(CertificateExpiredException ex){throw bad("O certificado A1 está vencido. Cadastre um certificado válido");}
+        catch(CertificateNotYetValidException ex){throw bad("O certificado A1 ainda não está válido. Confira a data do servidor e o início de validade do certificado");}
         if (cert.getBasicConstraints()>=0 || !"RSA".equals(cert.getPublicKey().getAlgorithm()) || ((java.security.interfaces.RSAKey)cert.getPublicKey()).getModulus().bitLength()<2048)
             throw bad("O A1 deve ser de usuário final, com chave RSA de pelo menos 2048 bits");
         if (cert.getKeyUsage()!=null && !cert.getKeyUsage()[0]) throw bad("Certificado não permite assinatura digital");
         if (cert.getExtendedKeyUsage()!=null && !cert.getExtendedKeyUsage().contains("1.3.6.1.5.5.7.3.2")) throw bad("Certificado não permite autenticação cliente");
         if (!taxIds(cert).contains(holder)) throw bad("CPF/CNPJ informado não corresponde à identidade ICP-Brasil do A1");
-        String trustPath=settings.env.getProperty("NFSE_ICP_TRUSTSTORE");
-        if (trustPath==null || trustPath.isBlank()) throw bad("Configure NFSE_ICP_TRUSTSTORE com as âncoras ICP-Brasil confiáveis");
+        Path trustPath=settings.truststorePath();
         char[] trustPassword=settings.env.getProperty("NFSE_ICP_TRUSTSTORE_PASSWORD","").toCharArray();
         var trust=KeyStore.getInstance("PKCS12");
-        try (var input=Files.newInputStream(Path.of(trustPath))) { trust.load(input,trustPassword); }
+        try (var input=Files.newInputStream(trustPath)) { trust.load(input,trustPassword); }
         finally { Arrays.fill(trustPassword,'\0'); }
         var selector=new X509CertSelector(); selector.setCertificate(cert);
         var params=new PKIXBuilderParameters(trust,selector); params.setDate(Date.from(settings.clock.instant()));

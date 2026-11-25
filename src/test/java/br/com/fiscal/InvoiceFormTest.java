@@ -12,7 +12,7 @@ class InvoiceFormTest {
     static InvoiceForm.Details details(boolean retained,String unconditional,String conditional) {
         String base=new BigDecimal("1000").subtract(new BigDecimal(unconditional)).toPlainString();
         var taxes=new InvoiceForm.Taxes(tax(retained,retained?"2":"5",base),tax(retained,retained?"0.65":"0",base),tax(retained,retained?"3":"0",base),tax(retained,retained?"1":"0",base),tax(retained,retained?"1.5":"0",base),tax(retained,retained?"11":"0",base),"01");
-        return new InvoiceForm.Details(new NfseModels.Recipient("52998224725","Tomador do formulário","form@example.com",null),List.of(new InvoiceForm.Item(new BigDecimal("4"),new BigDecimal("250.00"))),"PIX",LocalDate.of(2026,12,10),new BigDecimal(unconditional),new BigDecimal(conditional),"Informação & complemento <teste>",taxes,new InvoiceForm.Approximation("SIMPLES",new BigDecimal("5"),null,null,null),"3550308","");
+        return new InvoiceForm.Details(new NfseModels.Recipient("52998224725","Tomador do formulário","form@example.com",new NfseModels.Address("3550308","01001000","Rua de teste","10","Centro")),List.of(new InvoiceForm.Item(new BigDecimal("4"),new BigDecimal("250.00"))),"PIX",LocalDate.of(2026,12,10),new BigDecimal(unconditional),new BigDecimal(conditional),"Informação & complemento <teste>",taxes,new InvoiceForm.Approximation("SIMPLES",new BigDecimal("5"),null,null,null),"3550308","");
     }
     @Test void calculatesVideoExampleAndExplicitRetentionsWithExactDecimalRounding() {
         var simple=InvoiceForm.calculate(details(false,"0","0"));
