@@ -61,3 +61,17 @@ A DPS estruturada aplica o tomador preservado, descontos nos grupos oficiais, in
 Rascunhos estruturados usam os próprios dados na preparação e não aceitam uma DPS completa diferente sobreposta. O fluxo de DPS avançada continua disponível para rascunhos anteriores/técnicos, sujeito às validações existentes. O pacote oficial e os leiautes de referência estão na [documentação técnica da NFS-e Nacional](https://www.gov.br/nfse/pt-br/biblioteca/documentacao-tecnica/documentacao-atual).
 
 O ambiente padrão permanece **HOMOLOGACAO**. Testes utilizam gateway controlado, certificados artificiais e confirmação de interface simulada, sem emissão de notas reais. A homologação com contribuinte e certificado reais permanece pendente.
+
+
+### Município da prestação
+
+**Usar município do prestador** vem marcado por padrão. A busca exibe o município cadastrado do prestador e fica desabilitada. Ao desmarcar, é obrigatório selecionar a cidade da prestação na busca por nome/UF. O rascunho grava explicitamente o código IBGE da opção escolhida. Trocar o prestador ou iniciar outra nota restaura a opção padrão; alternar o checkbox durante o preenchimento não envia a cidade manual quando a opção do prestador está marcada.
+
+
+### Recuperação automática do preenchimento
+
+A tela salva automaticamente no `localStorage` os campos e seleções, inclusive preenchimento incompleto e a etapa atual, por escritório, usuário e prestador. Ao visitar configurações, voltar à emissão ou recarregar a página, os dados são recuperados. A última empresa é restaurada somente se continuar autorizada ao usuário.
+
+**Cancelar preenchimento** apaga o formulário local após confirmação. Salvar rascunho ou fechar a revisão não apaga o preenchimento. A resposta definitiva da transmissão (autorizada/rejeitada) limpa o formulário local; resultados incertos preservam uma referência à DPS preparada e retomam o acompanhamento sem transmitir automaticamente. A chave de idempotência do rascunho também é preservada. Nenhuma senha de login, A1 ou chave de assinatura é salva nesse mecanismo.
+
+O armazenamento pertence ao navegador e à origem de acesso; limpar seus dados ou trocar de navegador remove essa recuperação. Se o navegador bloquear o armazenamento ou não houver espaço, a tela avisa e continua permitindo salvar um rascunho no servidor. O cancelamento do preenchimento local não cancela notas fiscais ou apaga rascunhos já gravados no banco.

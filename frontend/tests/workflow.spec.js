@@ -40,7 +40,7 @@ async function documentStep(page) {
   await page.getByRole('button', { name: 'Continuar para serviços', exact: true }).click();
 }
 async function addService(page, price, quantity = '1') {
-  await page.getByLabel('Quantidade', { exact: true }).fill(quantity);
+  await page.getByRole('spinbutton', { name: /^Quantidade/ }).fill(quantity);
   await page.getByLabel('Valor unitário (R$)').fill(price);
   await page.getByRole('button', { name: 'Adicionar serviço', exact: true }).click();
 }
@@ -195,15 +195,38 @@ test('A1, procuração e DPS assinada pela interface, sem transmitir ao Fisco', 
   await dialog.getByLabel('Código do município IBGE').fill('3550308');
   await dialog.getByRole('button', { name: 'Salvar empresa' }).click();
   await expect(dialog).not.toBeVisible();
-  await page.getByRole('navigation').getByRole('link', { name: 'A1 e procurações' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Nova nota', exact: false }).click();
+  await page.getByLabel('Nome / razão social do tomador').fill('Preenchimento mantido durante configuração');
+  await page.getByRole('button', { name: 'Configurar emissão', exact: true }).click();
+  let setup = page.getByRole('dialog', { name: /Configuração de emissão/ });
+  await expect(setup).toContainText('Conexão Serviços');
+  await expect(setup.getByRole('combobox', { name: 'Empresa cliente' })).toHaveCount(0);
+  await setup.getByLabel('Inscrição municipal (quando exigida)').fill('6.470.006-2');
+  await expect(setup.getByLabel('Inscrição municipal (quando exigida)')).toHaveValue('64700062');
   await page.getByRole('button', { name: 'Salvar enquadramento' }).click();
   await expect(page.getByRole('alert').filter({ hasText: 'Enquadramento e série salvos.' })).toBeVisible();
+  await setup.getByRole('button', { name: 'Salvar procuração', exact: true }).click();
+  await expect(setup.getByText('Preencha os campos destacados antes de salvar a procuração.', { exact: true })).toBeVisible();
+  await expect(setup.getByText('Informe a referência da procuração oficial para este prestador.', { exact: true })).toBeVisible();
   await page.getByRole('combobox', { name: /A1 do procurador/ }).click();
   await page.getByRole('option', { name: /A1 artificial de teste/ }).click();
   await page.getByLabel('Referência da procuração oficial').fill('PROCURAÇÃO ARTIFICIAL E2E');
-  await page.getByLabel('Válida até').fill('2030-12-31');
+  await expect(page.getByLabel('Válida a partir de')).toHaveValue('');
+  await expect(page.getByLabel('Válida até')).toHaveValue('');
   await page.getByRole('button', { name: 'Salvar procuração' }).click();
   await expect(page.getByRole('alert').filter({ hasText: 'Procuração vinculada.' })).toBeVisible();
+  await setup.getByRole('button', { name: 'Voltar à emissão', exact: true }).click();
+  await expect(setup).not.toBeVisible();
+  await expect(page.getByLabel('Nome / razão social do tomador')).toHaveValue('Preenchimento mantido durante configuração');
+  await expect(page.getByText('Configuração salva para este prestador', { exact: true })).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'Configurar emissão', exact: true }).click();
+  setup = page.getByRole('dialog', { name: /Configuração de emissão/ });
+  await expect(setup.getByLabel('Referência da procuração oficial')).toHaveValue('PROCURAÇÃO ARTIFICIAL E2E');
+  await expect(setup.getByLabel('Inscrição municipal (quando exigida)')).toHaveValue('64700062');
+  await expect(setup.getByRole('combobox', { name: /A1 do procurador/ })).toContainText('A1 artificial de teste');
+  await setup.getByRole('button', { name: 'Voltar à emissão', exact: true }).click();
+
   await page.getByRole('navigation').getByRole('link', { name: 'Padrões fiscais' }).click();
   await page.getByRole('button', { name: 'Criar configuração fiscal' }).click();
   dialog = page.getByRole('dialog');
@@ -359,6 +382,25 @@ test('cadastra tomador e variantes do mesmo serviço e reutiliza NBS, retenção
   await dialog.getByRole('button', { name: 'Salvar configuração' }).click();
   await expect(dialog).not.toBeVisible();
   await expect(page.getByText('2 variações vigentes nesta competência.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Editar configuração', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: /Editar configuração fiscal/ });
+  await expect(dialog.getByLabel('Código NBS (9 dígitos)')).toHaveValue('115011000');
+  await expect(dialog.getByLabel('Início da vigência')).toHaveValue('2026-01-01');
+  await dialog.getByLabel('Código NBS (9 dígitos)').fill('115012000');
+  await dialog.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await page.getByRole('button', { name: 'Editar configuração', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: /Editar configuração fiscal/ });
+  await expect(dialog.getByLabel('Código NBS (9 dígitos)')).toHaveValue('115011000');
+  await dialog.getByLabel('Código NBS (9 dígitos)').fill('115012000');
+  await dialog.getByRole('button', { name: 'Salvar alterações', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await page.reload();
+  await page.getByRole('combobox', { name: 'Emitente', exact: true }).click();
+  await page.getByRole('option', { name: 'Catálogo Fiscal Teste', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Serviço / variação' }).click();
+  await page.getByRole('option', { name: 'Anexo III — com retenção · com retenção', exact: true }).click();
+  await expect(page.getByText('115012000', { exact: true })).toBeVisible();
+
   await page.getByRole('navigation').getByRole('link', { name: 'Tomadores', exact: true }).click();
   await page.getByRole('button', { name: 'Cadastrar tomador', exact: true }).click();
   dialog = page.getByRole('dialog');
@@ -391,7 +433,7 @@ test('cadastra tomador e variantes do mesmo serviço e reutiliza NBS, retenção
   await page.getByRole('button', { name: 'Salvar rascunho' }).click();
   await page.getByRole('link', { name: 'Preparar emissão nacional' }).click();
   dialog = page.getByRole('dialog');
-  await expect(dialog.getByText('115011000', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('115012000', { exact: true })).toBeVisible();
   await expect(dialog).toContainText('Tomador de catálogo');
   await expect(dialog).toContainText('atualizado@example.com');
   await expect(dialog).toContainText('Rua de teste');
@@ -445,12 +487,17 @@ test('compartilhamento monta WhatsApp e e-mail e identifica uma nota cancelada s
   await expect(dialog).not.toBeVisible();
 });
 
-test('formulário do vídeo calcula quatro serviços, salva complementos e confirma geração sem transmissão externa', async ({ page }) => {
+for (const scenario of ['success', 'missing', 'uncertain']) {
+const missingConfiguration = scenario === 'missing';
+const uncertain = scenario === 'uncertain';
+const companyName = missingConfiguration ? 'Revisão com pendências' : uncertain ? 'Recuperação pendente' : 'Formulário do Vídeo Teste';
+const issuerTaxId = missingConfiguration ? '31415926000252' : uncertain ? '31415926000333' : '31415926000171';
+test(`formulário do vídeo: ${missingConfiguration ? 'revisão com pendências' : uncertain ? 'recuperação sem retransmissão automática' : 'geração simulada'}`, async ({ page }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   let prepares = 0, transmissions = 0;
   const noteId = '22222222-0000-0000-0000-000000000001';
   let prepared;
-  await page.route('**/api/nfse/issuers/*/profile', route => route.fulfill({ json: { simplesOption: '3', simplesAssessment: '1', specialRegime: '0', series: '1', lastDpsNumber: 0 } }));
+  await page.route('**/api/nfse/issuers/*/profile', route => route.fulfill(missingConfiguration ? { status: 422, json: { error: 'Configure o enquadramento e a série DPS do emitente' } } : { json: { simplesOption: '3', simplesAssessment: '1', specialRegime: '0', series: '1', lastDpsNumber: 0 } }));
   await page.route('**/api/nfse/issuers/*/proxy', route => route.fulfill({ json: { active: true, reference: 'PROCURAÇÃO SIMULADA', canIssue: true } }));
   await page.route('**/api/nfse/prepare', async route => {
     prepares++; const body = route.request().postDataJSON();
@@ -458,18 +505,19 @@ test('formulário do vídeo calcula quatro serviços, salva complementos e confi
     await route.fulfill({ status: 201, json: prepared });
   });
   await page.route(`**/api/nfse/notes/${noteId}/transmit`, route => {
-    transmissions++; return route.fulfill({ json: { ...prepared, status: 'AUTHORIZED', officialNumber: '999', consultationUrl: 'https://www.producaorestrita.nfse.gov.br/ConsultaPublica/', lastMessage: 'Autorização de teste simulada' } });
+    transmissions++; return route.fulfill({ json: { ...prepared, status: uncertain ? 'UNKNOWN' : 'AUTHORIZED', officialNumber: '999', consultationUrl: 'https://www.producaorestrita.nfse.gov.br/ConsultaPublica/', lastMessage: 'Autorização de teste simulada' } });
   });
+  await page.route(`**/api/nfse/notes/${noteId}`, route => route.fulfill({ json: { ...prepared, status: 'UNKNOWN', retryAllowed: false } }));
   await page.goto('/'); await login(page);
   await page.getByRole('navigation').getByRole('link', { name: 'Empresas', exact: true }).click();
   await page.getByRole('button', { name: 'Cadastrar empresa', exact: true }).click();
   let dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Razão social').fill('Formulário do Vídeo Teste');
-  await dialog.getByLabel('CNPJ').fill('31415926000171');
+  await dialog.getByLabel('Razão social').fill(companyName);
+  await dialog.getByLabel('CNPJ').fill(issuerTaxId);
   await dialog.getByLabel('Código do município IBGE').fill('3550308');
   await dialog.getByRole('button', { name: 'Salvar empresa' }).click();
   await expect(dialog).not.toBeVisible();
-  await page.getByRole('row').filter({ hasText: 'Formulário do Vídeo Teste' }).getByRole('button', { name: 'Padrões fiscais' }).click();
+  await page.getByRole('row').filter({ hasText: companyName }).getByRole('button', { name: 'Padrões fiscais' }).click();
   await page.getByRole('button', { name: 'Criar configuração fiscal' }).click();
   dialog = page.getByRole('dialog');
   await dialog.getByLabel('Início da vigência').fill('2026-01-01');
@@ -480,6 +528,26 @@ test('formulário do vídeo calcula quatro serviços, salva complementos e confi
   await dialog.getByRole('button', { name: 'Salvar configuração' }).click();
   await expect(dialog).not.toBeVisible();
   await page.getByRole('navigation').getByRole('link', { name: 'Nova nota', exact: false }).click();
+  const useIssuerMunicipality = page.getByRole('checkbox', { name: 'Usar município do prestador', exact: true });
+  const municipality = page.getByRole('combobox', { name: /^Município da prestação/ });
+  await expect(useIssuerMunicipality).toBeChecked();
+  await expect(municipality).toBeDisabled();
+  await expect(municipality).toHaveValue('São Paulo / SP');
+  await useIssuerMunicipality.uncheck();
+  await expect(municipality).toBeEnabled();
+  await expect(municipality).toHaveAttribute('required', '');
+  await municipality.fill('Cidade inexistente de teste');
+  await expect(page.getByText('Selecione uma cidade da lista.', { exact: true })).toBeVisible();
+  expect(await municipality.evaluate(input => input.checkValidity())).toBe(false);
+  await municipality.fill('Santos');
+  await page.getByRole('option', { name: 'Santos / SP', exact: true }).click();
+  await expect(municipality).toHaveValue('Santos / SP');
+  await expect(page.getByText('Código IBGE: 3548500', { exact: true })).toBeVisible();
+  await useIssuerMunicipality.check();
+  await expect(municipality).toBeDisabled();
+  await expect(municipality).toHaveValue('São Paulo / SP');
+  await useIssuerMunicipality.uncheck();
+  await expect(municipality).toHaveValue('Santos / SP');
   await documentStep(page); await addService(page, '250', '4');
   await expect(page.getByRole('table', { name: 'Serviços da nota' })).toContainText('1.000,00');
   await page.getByRole('button', { name: 'Continuar para pagamento' }).click();
@@ -492,6 +560,16 @@ test('formulário do vídeo calcula quatro serviços, salva complementos e confi
   await page.getByRole('option', { name: 'Percentual do Simples Nacional', exact: true }).click();
   await page.getByLabel('Percentual total do Simples (%)').fill('5');
   await expect(page.locator('.invoice-summary')).toContainText('975,00');
+  await page.getByRole('navigation').getByRole('link', { name: 'A1 e procurações' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Nova nota', exact: false }).click();
+  await expect(page.getByLabel('Informações complementares')).toHaveValue('Quatro atendimentos de exemplo.');
+  await expect(page.getByLabel('Desconto total (R$)')).toHaveValue('25');
+  await expect(page.getByLabel('Vencimento', { exact: true })).toHaveValue('2026-12-31');
+  await expect(page.getByRole('combobox', { name: 'Forma de pagamento' })).toContainText('PIX');
+  await page.reload();
+  await expect(page.getByLabel('Informações complementares')).toHaveValue('Quatro atendimentos de exemplo.');
+  await expect(page.getByLabel('Percentual total do Simples (%)')).toHaveValue('5');
+  await expect(page.locator('.invoice-summary')).toContainText('975,00');
   await page.evaluate(() => window.scrollTo(0, 0));
   await expect(page.getByRole('listbox')).toHaveCount(0);
   await page.screenshot({ path: 'test-results/invoice-video-payment.png', fullPage: true });
@@ -499,13 +577,143 @@ test('formulário do vídeo calcula quatro serviços, salva complementos e confi
   await page.getByRole('button', { name: 'Revisar emissão', exact: true }).click();
   const saved = await (await savedResponse).json();
   expect(saved.amount).toBe(1000); expect(saved.snapshot.commercial.items[0].quantity).toBe(4);
+  expect(saved.snapshot.commercial.serviceMunicipality).toBe('3548500');
   expect(saved.snapshot.commercial.paymentMethod).toBe('PIX'); expect(saved.snapshot.totals.estimatedNet).toBe(975);
   dialog = page.getByRole('dialog', { name: 'Confirmar geração da nota', exact: true });
   await expect(dialog).toContainText('HOMOLOGAÇÃO');
   await expect(dialog.getByRole('button', { name: 'Gerar e transmitir NFS-e' })).toBeDisabled();
   expect(prepares).toBe(0); expect(transmissions).toBe(0);
-  await dialog.getByLabel('Digite o CNPJ do emitente para confirmar').fill('31415926000171');
+  await dialog.getByLabel('Digite o CNPJ do emitente para confirmar').fill(issuerTaxId);
+  if (missingConfiguration) {
+    await expect(dialog).toContainText('A revisão foi salva como rascunho');
+    await expect(dialog.getByRole('button', { name: 'Gerar e transmitir NFS-e' })).toBeDisabled();
+    expect(prepares).toBe(0); expect(transmissions).toBe(0); expect(errors).toEqual([]); return;
+  }
   await dialog.getByRole('button', { name: 'Gerar e transmitir NFS-e' }).click();
+  if (uncertain) {
+    await expect(page.getByRole('heading', { name: 'Acompanhar emissão', exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Acompanhar emissão', exact: true })).toBeVisible();
+    expect(prepares).toBe(1); expect(transmissions).toBe(1); expect(errors).toEqual([]); return;
+  }
   await expect(page.getByRole('heading', { name: 'Nota fiscal autorizada', exact: true })).toBeVisible();
   expect(prepares).toBe(1); expect(transmissions).toBe(1); expect(errors).toEqual([]);
+  const cachedForms = await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('sa-trindade:invoice:v1:') && !key.endsWith(':lastIssuer')));
+  expect(cachedForms).toEqual([]);
+});
+}
+
+
+test('vincula o mesmo tomador a outro prestador e compartilha edições', async ({ page }) => {
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/api/issuers/*/recipients/cnpj/11222333000181', route => route.fulfill({ json: { taxId: '11222333000181', name: 'Tomador com vínculos', email: 'inicial@example.com', address: { municipality: '3550308', zip: '01001000', street: 'Rua consultada', number: '25', neighborhood: 'Centro' }, source: 'BrasilAPI' } }));
+  await page.goto('/'); await login(page);
+  for (const [name, cnpj] of [['Prestador origem vínculo', '44555666000110'], ['Prestador destino vínculo', '44555666000200']]) {
+    await page.getByRole('navigation').getByRole('link', { name: 'Empresas', exact: true }).click();
+    await page.getByRole('button', { name: 'Cadastrar empresa', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Razão social').fill(name);
+    await dialog.getByLabel('CNPJ').fill(cnpj);
+    await dialog.getByLabel('Código do município IBGE').fill('3550308');
+    await dialog.getByRole('button', { name: 'Salvar empresa', exact: true }).click();
+    await expect(dialog).not.toBeVisible();
+  }
+  await page.getByRole('navigation').getByRole('link', { name: 'Tomadores', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Empresa emitente' }).click();
+  await page.getByRole('option', { name: 'Prestador origem vínculo', exact: true }).click();
+  await page.getByRole('button', { name: 'Cadastrar tomador', exact: true }).click();
+  let dialog = page.getByRole('dialog');
+  await dialog.getByLabel('CPF/CNPJ do tomador').fill('11222333000181');
+  await dialog.getByRole('button', { name: 'Buscar pelo CNPJ', exact: true }).click();
+  await expect(dialog.getByLabel('Nome / razão social do tomador')).toHaveValue('Tomador com vínculos');
+  await expect(dialog.getByLabel('Logradouro')).toHaveValue('Rua consultada');
+  await expect(dialog.getByLabel('Município IBGE')).toHaveValue('3550308');
+  await expect(dialog.getByLabel('CEP')).toHaveValue('01001000');
+  await dialog.getByRole('button', { name: 'Salvar tomador', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await page.getByRole('button', { name: 'Vincular prestadores', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: 'Vincular tomador a prestadores' });
+  await expect(dialog.getByRole('checkbox', { name: 'Prestador origem vínculo — já vinculado', exact: true })).toBeChecked();
+  await dialog.getByRole('checkbox', { name: 'Prestador destino vínculo', exact: true }).check();
+  await dialog.getByRole('button', { name: 'Salvar vínculos', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await page.getByRole('combobox', { name: 'Empresa emitente' }).click();
+  await page.getByRole('option', { name: 'Prestador destino vínculo', exact: true }).click();
+  await expect(page.getByRole('table')).toContainText('Tomador com vínculos');
+  await page.getByRole('button', { name: 'Editar tomador', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await dialog.getByLabel('E-mail do tomador').fill('compartilhado@example.com');
+  await dialog.getByRole('button', { name: 'Salvar tomador', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await page.getByRole('combobox', { name: 'Empresa emitente' }).click();
+  await page.getByRole('option', { name: 'Prestador origem vínculo', exact: true }).click();
+  await expect(page.getByRole('table')).toContainText('compartilhado@example.com');
+  expect(errors).toEqual([]);
+});
+
+
+test('procuração explica ausência de A1 e oferece cadastro', async ({ page }) => {
+  await page.route('**/api/nfse/certificates', route => route.fulfill({ json: [] }));
+  await page.goto('/'); await login(page);
+  await page.getByRole('navigation').getByRole('link', { name: 'Empresas', exact: true }).click();
+  await page.getByRole('button', { name: 'Cadastrar empresa', exact: true }).click();
+  let dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Razão social').fill('Procuração sem certificado');
+  await dialog.getByLabel('CNPJ').fill('44555666000390');
+  await dialog.getByLabel('Código do município IBGE').fill('3550308');
+  await dialog.getByRole('button', { name: 'Salvar empresa' }).click();
+  await expect(dialog).not.toBeVisible();
+  await page.getByRole('navigation').getByRole('link', { name: 'A1 e procurações' }).click();
+  await page.getByRole('combobox', { name: 'Empresa cliente' }).click();
+  await page.getByRole('option', { name: 'Procuração sem certificado', exact: true }).click();
+  await expect(page.getByRole('combobox', { name: /A1 do procurador/ })).toBeDisabled();
+  const warning = page.getByRole('alert').filter({ hasText: 'Nenhum A1 ativo cadastrado' });
+  await expect(warning).toBeVisible();
+  await page.getByRole('button', { name: 'Salvar procuração', exact: true }).click();
+  await expect(page.getByText('Preencha os campos destacados antes de salvar a procuração.', { exact: true })).toBeVisible();
+  await warning.getByRole('button', { name: 'Cadastrar A1', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: 'Cadastrar certificado A1', exact: true });
+  await expect(dialog.getByText('Escolher arquivo', { exact: true })).toBeVisible();
+  await page.screenshot({ path: 'test-results/certificate-dialog-desktop.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(dialog).toBeVisible();
+  const bounds = await dialog.boundingBox();
+  expect(bounds.x).toBeGreaterThanOrEqual(0); expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: 'test-results/certificate-dialog-mobile.png', fullPage: true });
+});
+
+
+test('preserva preenchimento parcial por prestador e descarta somente por cancelamento explícito', async ({ page }) => {
+  await page.goto('/'); await login(page);
+  for (const [name, cnpj] of [['Persistência prestador A', '66777888000100'], ['Persistência prestador B', '66777888000200']]) {
+    await page.getByRole('navigation').getByRole('link', { name: 'Empresas', exact: true }).click();
+    await page.getByRole('button', { name: 'Cadastrar empresa', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Razão social').fill(name); await dialog.getByLabel('CNPJ').fill(cnpj);
+    await dialog.getByLabel('Código do município IBGE').fill('3550308');
+    await dialog.getByRole('button', { name: 'Salvar empresa' }).click(); await expect(dialog).not.toBeVisible();
+  }
+  await page.getByRole('navigation').getByRole('link', { name: 'Nova nota', exact: false }).click();
+  async function selectIssuer(name) {
+    await page.getByRole('combobox', { name: /^Empresa emitente/ }).click();
+    await page.getByRole('option', { name, exact: true }).click();
+  }
+  await selectIssuer('Persistência prestador A');
+  await page.getByLabel('Nome / razão social do tomador').fill('Preenchimento incompleto A');
+  await page.getByLabel('CPF/CNPJ do tomador').fill('5299');
+  await selectIssuer('Persistência prestador B');
+  await expect(page.getByLabel('Nome / razão social do tomador')).toHaveValue('');
+  await page.getByLabel('Nome / razão social do tomador').fill('Preenchimento B');
+  await selectIssuer('Persistência prestador A');
+  await expect(page.getByLabel('Nome / razão social do tomador')).toHaveValue('Preenchimento incompleto A');
+  await expect(page.getByLabel('CPF/CNPJ do tomador')).toHaveValue('5299');
+  await page.reload();
+  await expect(page.getByLabel('Nome / razão social do tomador')).toHaveValue('Preenchimento incompleto A');
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Cancelar preenchimento', exact: true }).click();
+  await expect(page.getByLabel('Nome / razão social do tomador')).toHaveValue('');
+  await page.reload();
+  await expect(page.getByLabel('Nome / razão social do tomador')).toHaveValue('');
+  await selectIssuer('Persistência prestador B');
+  await expect(page.getByLabel('Nome / razão social do tomador')).toHaveValue('Preenchimento B');
 });

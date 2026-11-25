@@ -29,7 +29,7 @@ Se necessário, copie `.env.example` para `.env` e altere `BACKEND_URL`. Essa va
 - Login: autenticação real por `/api/auth/login` e restauração por `/api/auth/session`, erro de credenciais e opção mostrar/ocultar senha.
 - Visão geral: faturamento diário/mensal e quantidade de notas válidas autorizadas, pendências e certificados, com filtros de data, emitente e ambiente. Rascunhos não contam como faturamento.
 - Empresas: listagem, busca, cadastro e importação CSV com prévia e correção de campos inválidos em modal.
-- Tomadores: cadastro e edição por emitente, reutilizados na emissão.
+- Tomadores: cadastro, edição e vínculo do mesmo tomador a vários prestadores, reutilizado na emissão. O contador gerencia os vínculos; clientes acessam apenas sua empresa.
 - Contábil · XML: prévia e exportação em lote dos XMLs oficiais e eventos em ZIP.
 - Padrões fiscais: consulta por emitente/competência e criação de novas versões com LC 116, tributação nacional, CNAE, descrição, percentuais e ISS retido. Cliente tem acesso de consulta.
 - Nova nota: formulário em três etapas (documento/destinatário, serviços, pagamento/emissão), com quantidades, unitários, descontos, retenções e resumo. Rascunho persistente e transmissão após confirmação do CNPJ. Veja [campos e regras](../docs/FORMULARIO-EMISSAO.md).
@@ -69,3 +69,5 @@ Referências usadas: [instalação oficial do Material UI](https://mui.com/mater
 ## Limites
 
 A integração NFS-e foi implementada, mas exige configuração do cofre, truststore ICP-Brasil, A1 e procuração válidos e homologação oficial antes da produção. Não há credenciais reais incluídas. O DANFSe é acessado pelo portal oficial, pois sua antiga API foi descontinuada. Cenários fiscais especiais usam complementos oficiais ou DPS completa não assinada; não há motor tributário universal. O cadastro básico ainda aceita CNPJ numérico; o fluxo de geração fiscal verifica os dígitos de CPF/CNPJ. A3 e NF-e de produtos permanecem pendentes. O compartilhamento é assistido por WhatsApp/e-mail com confirmação no aplicativo externo; disparos automáticos permanecem pendentes. Consulte [o guia fiscal](../docs/INTEGRACAO-NFSE.md).
+
+Para verificar o build estático em vez do servidor de desenvolvimento, execute `npm run build` e depois `E2E_PREVIEW=true npm run test:e2e`. O teste continua usando backend e banco isolados.

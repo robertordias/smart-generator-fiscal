@@ -46,12 +46,13 @@ export default function PrepareNfse({ initialDraftId = '', onClose, onPrepared }
     setRecipientId(saved?.id || '');
     const values = saved?.values || {};
     setForm(f => ({ ...f, taxId: values.taxId || '', name: values.name || '', email: values.email || '' }));
-    setAddress(values.address ? { ...values.address } : null); setReview(false);
+    setAddress(values.address ? { ...values.address } : saved ? { municipality: '', zip: '', street: '', number: '', neighborhood: '' } : null); setReview(false);
   }
   const expectedFederal = defaults && ['irrfRate', 'pisRate', 'cofinsRate', 'csllRate', 'inssRate'].some(key => Number(defaults[key]) > 0);
   const missingSetup = grant.error || profile.error;
   async function submit(event) {
     event.preventDefault(); setError(null);
+    if (defaults?.issWithheld && !address && !form.advancedDpsXml) { setError(new Error(commercial ? 'Este rascunho não possui endereço do tomador e tem ISS retido. Corrija o cadastro e crie um novo rascunho.' : 'Informe o endereço completo do tomador para emitir com ISS retido.')); return; }
     if (!review) { setReview(true); return; }
     setBusy(true);
     try {

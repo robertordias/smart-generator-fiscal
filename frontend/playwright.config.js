@@ -37,7 +37,7 @@ export default defineConfig({
       reuseExistingServer: false, timeout: 30000, stdout: 'ignore',
     },
     {
-      command: 'npm run dev -- --port 5174',
+      command: process.env.E2E_PREVIEW === 'true' ? 'npm run preview -- --port 5174' : 'npm run dev -- --port 5174',
       url: 'http://127.0.0.1:5174',
       env: { BACKEND_URL: 'http://127.0.0.1:18081' },
       reuseExistingServer: false, timeout: 30000, stdout: 'ignore',

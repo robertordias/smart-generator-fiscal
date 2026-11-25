@@ -20,6 +20,7 @@ function AccountingContent() {
   const filters = { issuerId, from, to, environment };
   const valid = !!from && !!to && from <= to;
   const summary = useResource(isManager && valid ? `/office/xml/summary?${query(filters)}` : null);
+
   async function download() {
     setBusy(true); setError(null);
     try {
@@ -28,6 +29,7 @@ function AccountingContent() {
       anchor.href = url; anchor.download = `xml-${environment.toLowerCase()}-${from}-${to}.zip`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) { setError(e); } finally { setBusy(false); }
   }
+
   return <><PageHeading title="Contábil · XML" subtitle="Feche o período e baixe os XMLs oficiais de toda a carteira em um único pacote." />
     {!isManager ? <Alert severity="info">A exportação contábil em lote é exclusiva do gestor do escritório.</Alert> : <>
       <Paper variant="outlined" className="filter-bar"><TextField select slotProps={{ inputLabel: { shrink: true }, select: { displayEmpty: true } }} label="Emitente da exportação" value={issuerId} onChange={e => setIssuerId(e.target.value)}><MenuItem value="">Todas as empresas</MenuItem>{companies.data?.map(company => <MenuItem key={company.id} value={company.id}>{company.name}</MenuItem>)}</TextField>

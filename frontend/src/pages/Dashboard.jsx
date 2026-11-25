@@ -22,12 +22,14 @@ export default function Dashboard() {
   const recent = useResource(`/drafts?${query({ issuerId, size: 5 })}`);
   const [selected, setSelected] = useState(null);
   const name = id => companies.data?.find(c => c.id === id)?.name || 'Empresa';
+
   const metrics = [
     { label: 'Faturamento do dia', value: operation.data ? money(operation.data.dayRevenue) : '—', note: `${operation.data?.dayNotes || 0} notas autorizadas · canceladas excluídas`, icon: AccountBalanceWalletOutlined },
     { label: 'Faturamento do mês', value: operation.data ? money(operation.data.monthRevenue) : '—', note: 'Valores brutos das NFS-e autorizadas no mês', icon: CalendarMonthOutlined },
     { label: 'Notas autorizadas no mês', value: operation.data?.monthNotes ?? '—', note: environment === 'PRODUCAO' ? 'Produção · exclui canceladas' : 'Homologação · sem validade fiscal', icon: DescriptionOutlined },
     { label: 'Emissões pendentes', value: operation.data?.pending ?? '—', note: 'Prontas, em transmissão ou aguardando confirmação', icon: BusinessOutlined },
   ];
+
   return <><PageHeading title="Visão geral" subtitle={`Olá, ${user.username}. Uma visão clara da operação do seu escritório.`} action={<Button variant="contained" component={Link} to="/nova-nota" startIcon={<AddRounded />}>Nova nota</Button>} /><Paper variant="outlined" className="filter-bar"><TextField select label="Ambiente do painel" value={environment} onChange={e => setEnvironment(e.target.value)}><MenuItem value="PRODUCAO">Produção</MenuItem><MenuItem value="HOMOLOGACAO">Homologação</MenuItem></TextField><TextField label="Data de referência" type="date" value={referenceDate} onChange={e => setReferenceDate(e.target.value || today())} slotProps={{ inputLabel: { shrink: true } }} /><Button component={Link} to="/notas-fiscais">Consultar notas</Button>{isManager && <Button component={Link} to="/contabil">Exportar XMLs</Button>}</Paper>
     {environment === 'HOMOLOGACAO' && <Alert severity="info" sx={{ mb: 2 }}>Valores de testes em homologação, sem validade fiscal.</Alert>}
     <ErrorBox error={operation.error || summary.error || companies.error} onRetry={() => { operation.reload(); summary.reload(); companies.reload(); }} />

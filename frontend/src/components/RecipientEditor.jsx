@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, TextField, Typography } from '@mui/material';
 import { useAuth } from '../context';
 import { ErrorBox } from './Common';
 
@@ -9,7 +9,16 @@ export default function RecipientEditor({ issuerId, initial, onClose, onSaved })
   const [form, setForm] = useState(() => ({ taxId: '', name: '', email: '', address: null, ...initial?.values }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [lookupNotice, setLookupNotice] = useState('');
   const change = (key, value) => setForm(f => ({ ...f, [key]: value }));
+  async function lookup() {
+    setBusy(true); setError(null); setLookupNotice('');
+    try {
+      const result = await api(`/issuers/${issuerId}/recipients/cnpj/${form.taxId}`);
+      setForm(current => ({ ...current, name: result.name || current.name, email: current.email || result.email || '', address: { ...blankAddress(), ...result.address } }));
+      setLookupNotice('Dados preenchidos pela BrasilAPI. Confira o endereço e clique em Salvar tomador. A consulta não grava alterações automaticamente.');
+    } catch (e) { setError(e); } finally { setBusy(false); }
+  }
   async function save(event) {
     event.preventDefault(); setBusy(true); setError(null);
     try {
@@ -21,8 +30,8 @@ export default function RecipientEditor({ issuerId, initial, onClose, onSaved })
   }
   return <Dialog open fullWidth maxWidth="md" onClose={() => !busy && onClose()}><form onSubmit={save}>
     <DialogTitle>{initial?.id ? 'Editar tomador' : 'Cadastrar tomador'}</DialogTitle><DialogContent>
-      <Typography color="text.secondary" variant="body2" sx={{ mb: 3 }}>Dados vinculados à empresa emitente para reutilização nas notas fiscais.</Typography><ErrorBox error={error} />
-      <div className="field-grid"><TextField autoFocus required label="CPF/CNPJ do tomador" value={form.taxId} onChange={e => change('taxId', e.target.value.replace(/\D/g, '').slice(0, 14))} slotProps={{ htmlInput: { pattern: '[0-9]{11}|[0-9]{14}', inputMode: 'numeric' } }} disabled={busy} />
+      <Typography color="text.secondary" variant="body2" sx={{ mb: 3 }}>Dados do tomador para reutilização nas notas fiscais. Se houver outros prestadores vinculados, a edição feita pelo contador será refletida em todos eles.</Typography><ErrorBox error={error} />
+      <Box sx={{ mb: 3 }}><Button variant="outlined" disabled={busy || form.taxId.length !== 14} onClick={lookup}>Buscar pelo CNPJ</Button><Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 1 }}>Consulta pública via BrasilAPI. Disponível para CNPJ; para CPF, preencha manualmente.</Typography></Box>{lookupNotice && <Alert severity="success" sx={{ mb: 3 }}>{lookupNotice}</Alert>}<div className="field-grid"><TextField autoFocus required label="CPF/CNPJ do tomador" value={form.taxId} onChange={e => change('taxId', e.target.value.replace(/\D/g, '').slice(0, 14))} slotProps={{ htmlInput: { pattern: '[0-9]{11}|[0-9]{14}', inputMode: 'numeric' } }} disabled={busy} />
         <TextField required label="Nome / razão social do tomador" value={form.name} onChange={e => change('name', e.target.value)} slotProps={{ htmlInput: { maxLength: 150 } }} disabled={busy} />
         <TextField label="E-mail do tomador" type="email" value={form.email || ''} onChange={e => change('email', e.target.value)} slotProps={{ htmlInput: { maxLength: 80 } }} disabled={busy} /></div>
       <FormControlLabel sx={{ my: 2 }} label="Informar endereço do tomador" control={<Checkbox checked={!!form.address} disabled={busy} onChange={e => change('address', e.target.checked ? blankAddress() : null)} />} />

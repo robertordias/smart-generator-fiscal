@@ -12,6 +12,7 @@ export default function Drafts() {
   // Remount the paginated view when the global company scope changes.
   return <DraftList key={issuerId} issuerId={issuerId} companies={companies} isManager={isManager} />;
 }
+
 function DraftList({ issuerId, companies, isManager }) {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
