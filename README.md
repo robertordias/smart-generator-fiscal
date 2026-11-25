@@ -1,8 +1,10 @@
-# SA Trindade — Emissor fiscal para escritórios contábeis
+# Emissor Fiscal Inteligente
 
-Sistema web com backend Java 21/Spring Boot, frontend React 19/Material UI e PostgreSQL 16. Identidade visual em branco, cinza e dourado, com frontend independente na pasta `frontend/`. Código-fonte: [smart-generator-fiscal](https://github.com/robertordias/smart-generator-fiscal). O projeto completo está especificado em [Arquitetura funcional, telas e escopo](docs/ARQUITETURA.md) e no [modelo de banco PostgreSQL](docs/modelo-postgresql.sql).
+Sistema web de emissão fiscal inteligente para escritórios de contabilidade, com preenchimento automático por emitente, padrões fiscais reutilizáveis e acompanhamento das operações. Desenvolvido com backend Java 21/Spring Boot, frontend React 19/Material UI e PostgreSQL 16. Identidade visual em branco, cinza e dourado, com frontend independente na pasta `frontend/`. Código-fonte: [smart-generator-fiscal](https://github.com/robertordias/smart-generator-fiscal). O projeto completo está especificado em [Arquitetura funcional, telas e escopo](docs/ARQUITETURA.md) e no [modelo de banco PostgreSQL](docs/modelo-postgresql.sql).
 
-**Situação:** backend Java e frontend React/Material UI, com login de 8 horas, empresas, padrões fiscais versionados, rascunhos e conector NFS-e Nacional por A1/procuração. Implementados cofre criptografado, enquadramento, geração/assinatura/validação da DPS, transmissão mTLS, consulta, XML e cancelamento por evento. **A integração ainda não foi homologada com certificado e procuração reais.** O ambiente padrão é homologação e a produção exige habilitação explícita. Painel de autorizações, filtros, exportação contábil em ZIP e compartilhamento assistido estão disponíveis. A3, NF-e, marca personalizada e disparos automáticos continuam pendentes.
+**Situação atual:** aplicação executável com login de 8 horas, gestão de empresas e tomadores, padrões fiscais versionados, emissão estruturada e integração direta com a NFS-e Nacional. O backend prepara, valida e assina a DPS com A1, transmite por mTLS e acompanha autorização, rejeição, consulta e cancelamento. PostgreSQL armazena os cadastros e documentos; o formulário em andamento também é preservado no navegador.
+
+Já foram realizadas verificações com certificado real e chamadas aos serviços oficiais, incluindo transmissões com rejeições fiscais registradas. Isso não representa homologação completa de todos os cenários. O ambiente padrão é **homologação**; produção exige configuração explícita. A3, NF-e de produtos, personalização de marca por escritório e disparos automáticos permanecem no escopo futuro.
 
 Configuração e fluxo completo: [guia da integração NFS-e](docs/INTEGRACAO-NFSE.md).
 
@@ -77,11 +79,11 @@ A saúde deve retornar `{"status":"UP"}`. Depois, atualize a página. Se a porta
 ## Recursos e fluxo atual
 
 - **Empresas:** cadastro, busca e importação CSV de layout fixo, com prévia, validação e correção manual dos campos em modal antes de gravar os registros válidos.
-- **Tomadores:** cadastro por emitente, edição e reutilização no formulário da nota.
-- **Padrões fiscais:** versões por empresa, nome de serviço e vigência; LC 116, código nacional, CNAE, NBS, descrição e retenções. Permite variações do mesmo serviço com e sem retenção de ISS.
-- **Emissão:** formulário em três etapas, itens com quantidade e valor unitário, descontos, pagamento, complementos, retenções e resumo. Salva rascunhos e exige revisão e confirmação do CNPJ antes da transmissão.
-- **A1 e procurações:** cofre criptografado, vínculo do representante aos clientes, poderes, validade e enquadramento fiscal.
-- **Notas:** preparação e assinatura da DPS, transmissão, consulta, reconciliação, filtros, XML, cancelamento e histórico. DANFSe pelo portal oficial.
+- **Tomadores:** cadastro, edição e vínculo do mesmo tomador a vários prestadores. Busca de dados por CNPJ para conferência antes de salvar e preenchimento automático do endereço ao selecionar o tomador na emissão.
+- **Padrões fiscais:** criação e edição de configurações por empresa, nome de serviço e vigência; LC 116, código nacional, CNAE, NBS, descrição e retenções. Permite variações do mesmo serviço com e sem retenção de ISS.
+- **Emissão:** formulário em três etapas, itens com quantidade e valor unitário, descontos, pagamento, complementos, retenções e resumo. Preserva campos, seleções e etapas no localStorage por usuário e emitente ao navegar ou recarregar. A configuração de A1, procuração e enquadramento pode ser aberta em modal durante o preenchimento. Exige revisão e confirmação do CNPJ antes da transmissão.
+- **A1 e procurações:** cofre criptografado, vínculo do representante aos clientes, poderes, datas opcionais da procuração e enquadramento fiscal, incluindo MEI e ME/EPP. Suporta arquivos `.pfx` e `.p12`; o cadastro local não cria uma procuração nos serviços oficiais.
+- **Notas:** preparação e assinatura da DPS, transmissão, consulta, reconciliação, filtros, XML, cancelamento e histórico. A ação **Revisar DPS** permite preparar novamente um documento rejeitado com o enquadramento atualizado, preservando a identidade reservada quando permitido. DANFSe pelo portal oficial.
 - **Painel:** faturamento diário/mensal de notas válidas autorizadas, quantidades, pendências e alertas de certificados, com filtros de data, emitente e ambiente.
 - **Contábil · XML:** exportação em lote por período/ambiente, com XMLs oficiais, eventos de cancelamento e manifesto em ZIP.
 - **Compartilhamento:** WhatsApp/e-mail com mensagem e link oficial, cópia e download/compartilhamento do XML. O envio é confirmado pelo usuário no aplicativo externo; não há disparo automático via SMTP ou API do WhatsApp.
@@ -91,6 +93,17 @@ Os dados fiscais são selecionados pelo emitente, nome da variação e competên
 Fluxo de emissão: **Nova nota → Documento e destinatário → Serviços → Pagamento e emissão → Revisar emissão → Confirmar CNPJ**. A tela reúne tomador, quantidades, valores, pagamento, complementos, descontos e retenções; também permite salvar um rascunho sem transmitir. Configure A1, procuração e enquadramento em **A1 e procurações** antes de gerar a nota. O ambiente padrão continua em homologação. Consulte o [formulário de emissão](docs/FORMULARIO-EMISSAO.md) e o [painel operacional, XMLs em lote e compartilhamento](docs/OPERACAO-CONTABIL.md).
 
 O servidor Vite encaminha `/api` ao Java em `127.0.0.1:8080`, sem precisar liberar CORS. Se o backend usar outra porta, copie `frontend/.env.example` para `frontend/.env` e ajuste `BACKEND_URL`. Para parar cada servidor, use Ctrl+C no respectivo terminal. A sessão permanece ativa por **8 horas contadas a partir do login**, inclusive ao atualizar a página ou reabrir o navegador. Usar o sistema não renova esse prazo. “Sair da conta” revoga a sessão no servidor e encerra o acesso nas outras abas. As sessões são mantidas na memória do backend; reiniciá-lo exige novo login, sem perder os registros fiscais salvos.
+
+### Dados fiscais e preenchimento
+
+- **Município da prestação:** busca por nome/UF com código IBGE; a opção **Usar município do prestador** fica abaixo do seletor.
+- **Inscrição municipal:** configurada em **A1 e procurações → Enquadramento e numeração**; o editor de padrões oferece o atalho **Configurar IM / CCM**. O CCM de São Paulo é enviado sem pontos, espaços ou hífen, preservando os dígitos e zeros à esquerda.
+- **Códigos do serviço:** código nacional e desdobramento municipal são campos separados. Por exemplo, `100104` e `001` podem ser apresentados como `10.01.04 / 001`; o código municipal é preenchido na emissão e não deve ser incorporado ao campo nacional.
+- **MEI:** selecione explicitamente **MEI** no enquadramento. O formulário e o backend impedem preparação com ISS retido para MEI (E0583).
+- **Percentuais:** alíquota do ISS e tributos aproximados municipais são informações independentes. O campo **Total municipal (%)** é enviado como percentual aproximado, separado da retenção.
+- **Snapshots:** corrigir um padrão não recalcula rascunhos antigos. Para mudar serviço, valores ou retenções de um rascunho já preservado, gere outro com os dados corrigidos. Revisar uma DPS rejeitada atualiza sua preparação; não reescreve o conteúdo comercial do rascunho.
+
+O localStorage preserva o trabalho em andamento nesse navegador; ele não substitui a gravação do rascunho no PostgreSQL. Cancelar o preenchimento ou obter um resultado definitivo na transmissão limpa a cópia local. Resultados de comunicação incertos mantêm os dados para consulta, sem retransmissão automática. Arquivos e senhas do A1 não são armazenados nesse mecanismo.
 
 Detalhes de build, preview e testes: [README do frontend](frontend/README.md).
 
@@ -145,7 +158,7 @@ curl -u "contador:$APP_ADMIN_PASSWORD" -H 'Content-Type: application/json' \
 
 Resposta contém `status: DRAFT`, `snapshot.defaults.version` e `descriptionOrigin: ISSUER_DEFAULT`. Uma descrição manual diferente exige `overrideReason`. Nova tentativa com a mesma chave e mesmo corpo retorna o mesmo rascunho; alteração do corpo retorna 409. A comparação considera a representação do valor decimal; repita o corpo original em retentativas.
 
-Para modificar padrões, publique por POST uma nova configuração com outra data inicial. A maior data inicial até a competência determina a versão dentro de cada nome de variação. O mesmo código pode ser cadastrado em nomes diferentes, com ou sem retenção. Versões antigas e snapshots não são alterados. Duplicação de vigência para o mesmo nome retorna 409; ausência de política vigente retorna 422. Alíquotas não determinam por si só a aplicabilidade tributária; o fluxo de emissão exige revisão dos dados e validação oficial.
+Para corrigir uma configuração existente, use a edição por PUT com sua versão atual. Para uma nova vigência, publique por POST outra configuração com outra data inicial. A maior data inicial até a competência determina a versão dentro de cada nome de variação. O mesmo código pode ser cadastrado em nomes diferentes, com ou sem retenção. Uma nova vigência preserva as configurações anteriores; a edição não altera snapshots de rascunhos já criados. Duplicação de vigência para o mesmo nome retorna 409; ausência de política vigente retorna 422. Alíquotas não determinam por si só a aplicabilidade tributária; o fluxo de emissão exige revisão dos dados e validação oficial.
 
 ## API implementada
 
@@ -160,6 +173,7 @@ Para modificar padrões, publique por POST uma nova configuração com outra dat
 | POST | `/api/issuers` | Gestor |
 | POST | `/api/issuers/{id}/defaults` | Gestor; cria versão |
 | GET | `/api/issuers/{id}/defaults?competence=AAAA-MM-DD` | Empresa autorizada |
+| PUT | `/api/issuers/{id}/defaults/{defaultsId}` | Gestor; correção com controle de versão |
 | POST | `/api/drafts` | Empresa autorizada; exige Idempotency-Key |
 | GET | `/api/drafts?page=0&size=10` | Listagem paginada; filtros opcionais issuerId, from e to |
 | GET | `/api/drafts/{id}` | Empresa autorizada |
@@ -196,6 +210,41 @@ Estrutura: `src/main/java` contém API e autenticação; `src/main/resources/db/
 - [Integração NFS-e Nacional e configuração fiscal](docs/INTEGRACAO-NFSE.md)
 - [Frontend, build e testes de navegador](frontend/README.md)
 
-O ambiente padrão é **HOMOLOGACAO**. A produção exige `NFSE_ENVIRONMENT=PRODUCAO` e `NFSE_PRODUCTION_ENABLED=true`, além de configuração fiscal e credenciais válidas. O filtro de ambiente do painel não altera o ambiente de emissão. O conector implementa o Padrão Nacional; não há conectores municipais próprios que garantam atendimento a todo município/cenário do Brasil.
+## Homologação e produção
 
-A homologação com A1, procuração e contribuinte reais continua pendente. Os testes usam certificados artificiais e integração controlada, sem emissão real. A3, NF-e de produtos, personalização de logomarca por escritório e gestão dinâmica de usuários permanecem no escopo futuro. A chave `NFSE_MASTER_KEY` deve ser preservada para ler os A1 já cadastrados. `.env`, certificados reais, bancos locais e dependências geradas não devem ser enviados ao Git.
+O filtro **Ambiente do painel** altera apenas a consulta de indicadores e documentos. O ambiente de emissão é definido no servidor, no `.env` da raiz:
+
+```env
+# Desenvolvimento e testes fiscais
+NFSE_ENVIRONMENT=HOMOLOGACAO
+NFSE_PRODUCTION_ENABLED=false
+```
+
+Para operar em produção:
+
+```env
+NFSE_ENVIRONMENT=PRODUCAO
+NFSE_PRODUCTION_ENABLED=true
+```
+
+Após alterar, reinicie o Java na IDE ou no terminal. Em Docker, recrie o backend para carregar as variáveis:
+
+```sh
+docker compose up -d --build --force-recreate backend
+```
+
+Atualize a interface, faça login novamente e confira o ambiente exibido na confirmação. Variáveis definidas na configuração de execução do IntelliJ ou no processo prevalecem sobre o `.env`. **Produção emite documentos com validade fiscal**; a mudança de ambiente não corrige automaticamente rejeições de cadastro, enquadramento ou representação.
+
+### Série e numeração DPS
+
+A emissão por API utiliza séries de **1 a 49999**. As séries de **70000 a 79999** pertencem ao portal Web Nacional e não devem ser copiadas para esta integração. Para uma empresa que nunca utilizou a série `1` em produção pela API, configure série `1` e último número `0`; se já utilizou, informe o último número dessa mesma série, emitente e ambiente. Não reutilize a numeração de outros emissores sem conferir o histórico.
+
+O número DPS é diferente do número oficial da NFS-e, atribuído após autorização. Homologação e produção possuem sequências separadas. Antes da operação, configure a sequência correta do ambiente selecionado.
+
+### Certificado e representação
+
+O sistema usa o A1 vinculado ao prestador para assinar a DPS e autenticar a conexão. A procuração registrada na aplicação é declaratória; a autorização oficial deve corresponder ao emitente e ao CPF/CNPJ titular do certificado. E0718 indica rejeição do vínculo do assinante pela SEFIN; importar novamente um A1 ou salvar uma procuração local não garante sua resolução. O reconhecimento de uma consulta por procuração no ADN não comprova a aceitação da emissão na SEFIN.
+
+Testes automatizados usam certificados artificiais e respostas controladas. Verificações reais de conexão e rejeições oficiais foram executadas durante o desenvolvimento; a aceitação de todos os cenários fiscais continua pendente. O conector atende ao Padrão Nacional, sem conectores municipais próprios que garantam cobertura de todo município/cenário do Brasil.
+
+A3, NF-e de produtos, personalização de logomarca por escritório e gestão dinâmica de usuários permanecem no escopo futuro. Preserve a `NFSE_MASTER_KEY` para continuar lendo os A1 cadastrados. `.env`, certificados reais, bancos locais, dados de clientes e dependências geradas não devem ser enviados ao Git.
