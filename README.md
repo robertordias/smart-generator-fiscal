@@ -8,6 +8,12 @@ Já foram realizadas verificações com certificado real e chamadas aos serviço
 
 Configuração e fluxo completo: [guia da integração NFS-e](docs/INTEGRACAO-NFSE.md).
 
+## Prévia do sistema
+
+![Painel do Emissor Fiscal Inteligente com filtros, indicadores e últimos rascunhos](docs/previews/emissor-fiscal-inteligente.png)
+
+Interface demonstrativa com dados fictícios e identificação adaptada para **Emissor Fiscal Inteligente**.
+
 ## Executar com Docker e PostgreSQL
 
 A tela **Empresas** permite importar a relação de empresas em CSV, com prévia, validação por linha e gravação no PostgreSQL. Consulte [layout e regras de importação](docs/IMPORTACAO-EMPRESAS.md).
